@@ -715,7 +715,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs flex items-center gap-3 animate-pulse font-medium">
             <RefreshCw className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
             <div>
-              <span className="font-bold text-indigo-950">Syncing data from Google Apps Script...</span> Please wait while customer and product catalog records load.
+              <span className="font-bold text-indigo-950">Syncing catalog data...</span> Please wait while customer and product catalog records load.
             </div>
           </div>
         )}

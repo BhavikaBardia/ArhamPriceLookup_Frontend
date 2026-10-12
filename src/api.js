@@ -1,10 +1,21 @@
 import axios from 'axios';
 
+// Internal backend Google Apps Script endpoint
+const DEFAULT_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxpR4V1mzRxGovg1QXN99lUae12bFCqsGS03z-5bkEdl2K0GBujahleIKOwO3lTkDyB/exec';
+
 // Store configured Google Apps Script Web App URL in localStorage
 const APPS_SCRIPT_URL_KEY = 'arham_apps_script_url';
 
 export const getAppsScriptUrl = () => {
-  return localStorage.getItem(APPS_SCRIPT_URL_KEY) || '';
+  const custom = localStorage.getItem(APPS_SCRIPT_URL_KEY);
+  if (custom === 'local_disabled') {
+    return '';
+  }
+  if (custom && custom.trim()) {
+    return custom.trim();
+  }
+  // Default directly to the live Google Apps Script Web App
+  return DEFAULT_APPS_SCRIPT_URL;
 };
 
 export const setAppsScriptUrl = (url) => {
@@ -26,7 +37,7 @@ export const api = {
         const res = await axios.get(scriptUrl, { params: { action: 'getHealth' } });
         return {
           ...res.data,
-          script_url: scriptUrl
+          is_cloud_connected: true
         };
       } catch (err) {
         console.warn('Apps Script health check failed, falling back to local engine:', err);
@@ -239,13 +250,99 @@ export const api = {
     return res.data;
   },
 
+  // Save Quotation to Google Sheets ('Quotations' sheet)
+  saveQuotation: async (quotationData) => {
+    const scriptUrl = getAppsScriptUrl();
+    if (scriptUrl) {
+      try {
+        const res = await axios.post(
+          scriptUrl,
+          JSON.stringify({
+            action: 'saveQuotation',
+            payload: quotationData
+          }),
+          {
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+          }
+        );
+        if (res.data && res.data.error) {
+          throw new Error(res.data.error);
+        }
+        return res.data;
+      } catch (postErr) {
+        console.warn('POST saveQuotation failed, trying GET fallback:', postErr);
+        const res = await axios.get(scriptUrl, {
+          params: {
+            action: 'saveQuotation',
+            data: JSON.stringify(quotationData)
+          }
+        });
+        if (res.data && res.data.error) {
+          throw new Error(res.data.error);
+        }
+        return res.data;
+      }
+    }
+    const res = await axios.post(`${API_BASE}/quotations`, quotationData);
+    return res.data;
+  },
+
+  // Retrieve Saved Quotations
+  getQuotations: async () => {
+    const scriptUrl = getAppsScriptUrl();
+    if (scriptUrl) {
+      const res = await axios.get(scriptUrl, { params: { action: 'getQuotations' } });
+      return res.data;
+    }
+    const res = await axios.get(`${API_BASE}/quotations`);
+    return res.data;
+  },
+
+  // Confirm Order and update customer pricing with price history
+  confirmOrder: async (orderData) => {
+    const scriptUrl = getAppsScriptUrl();
+    if (scriptUrl) {
+      try {
+        const res = await axios.post(
+          scriptUrl,
+          JSON.stringify({
+            action: 'confirmOrder',
+            payload: orderData
+          }),
+          {
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+          }
+        );
+        if (res.data && res.data.error) {
+          throw new Error(res.data.error);
+        }
+        return res.data;
+      } catch (postErr) {
+        console.warn('POST confirmOrder failed, trying GET fallback:', postErr);
+        const res = await axios.get(scriptUrl, {
+          params: {
+            action: 'confirmOrder',
+            data: JSON.stringify(orderData)
+          }
+        });
+        if (res.data && res.data.error) {
+          throw new Error(res.data.error);
+        }
+        return res.data;
+      }
+    }
+    const res = await axios.post(`${API_BASE}/quotations/confirm`, orderData);
+    return res.data;
+  },
+
   // Connect Google Apps Script Web App dynamically
 
   connectAppsScript: async (url) => {
-    if (!url || !url.startsWith('http')) {
+    const targetUrl = (url && url.trim()) ? url.trim() : DEFAULT_APPS_SCRIPT_URL;
+    if (!targetUrl || !targetUrl.startsWith('http')) {
       throw new Error('Please enter a valid Google Apps Script Web App URL starting with https://script.google.com/...');
     }
-    const cleanUrl = url.trim();
+    const cleanUrl = targetUrl.trim();
     const res = await axios.get(cleanUrl, { params: { action: 'getHealth' } });
     if (res.data && (res.data.mode === 'google_apps_script' || res.data.status === 'online')) {
       setAppsScriptUrl(cleanUrl);
@@ -257,6 +354,6 @@ export const api = {
 
   // Disconnect Apps Script
   disconnectAppsScript: () => {
-    setAppsScriptUrl('');
+    localStorage.setItem(APPS_SCRIPT_URL_KEY, 'local_disabled');
   }
 };

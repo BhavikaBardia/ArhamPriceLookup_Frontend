@@ -4,11 +4,9 @@ import { PriceLookup } from './pages/PriceLookup';
 import { CustomerCatalog } from './pages/CustomerCatalog';
 import { Manage } from './pages/Manage';
 import { Quotation } from './pages/Quotation';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/Dialog';
 import { Badge } from './components/ui/Badge';
 import { 
-  Search, Database, Layers, CheckCircle2, AlertCircle, Settings, 
-  Sparkles, Server, Sheet, Table, Menu, X, PackagePlus, Users, DollarSign, FileText
+  Search, Sparkles, Server, Table, Menu, X, PackagePlus, Users, FileText
 } from 'lucide-react';
 
 export default function App() {
@@ -22,12 +20,6 @@ export default function App() {
   // Mobile navigation drawer toggle
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Settings modal
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [scriptUrlInput, setScriptUrlInput] = useState('');
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [connectMessage, setConnectMessage] = useState(null);
-
   useEffect(() => {
     checkStatus();
   }, []);
@@ -36,9 +28,6 @@ export default function App() {
     try {
       const data = await api.getHealth();
       setStatus(data);
-      if (data.script_url) {
-        setScriptUrlInput(data.script_url);
-      }
     } catch (err) {
       console.error('Failed to get status:', err);
     }
@@ -50,37 +39,7 @@ export default function App() {
     setCurrentPage('pricing');
   };
 
-  const handleConnectAppsScript = async (e) => {
-    e.preventDefault();
-    if (!scriptUrlInput.trim()) {
-      setConnectMessage({ type: 'error', text: 'Please enter a valid Google Apps Script Web App URL.' });
-      return;
-    }
-
-    setIsConnecting(true);
-    setConnectMessage(null);
-
-    try {
-      const res = await api.connectAppsScript(scriptUrlInput.trim());
-      setConnectMessage({ type: 'success', text: 'Successfully connected to Google Apps Script Web App!' });
-      setStatus(res);
-      setTimeout(() => setIsSettingsOpen(false), 1500);
-    } catch (err) {
-      const msg = err.message || 'Failed to connect to Google Apps Script Web App';
-      setConnectMessage({ type: 'error', text: msg });
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const handleDisconnectAppsScript = () => {
-    api.disconnectAppsScript();
-    setScriptUrlInput('');
-    setConnectMessage({ type: 'success', text: 'Disconnected Apps Script. Switched to Local Engine.' });
-    checkStatus();
-  };
-
-  const isAppsScriptConnected = status?.mode === 'google_apps_script' || !!status?.script_url;
+  const isAppsScriptConnected = status?.mode === 'google_apps_script' || !!status?.is_cloud_connected || !!status?.script_url;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
@@ -164,27 +123,19 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Database Mode Status Pill & Settings */}
+          {/* Live Status Indicator */}
           <div className="flex items-center gap-2 shrink-0">
             {isAppsScriptConnected ? (
-              <Badge variant="success" className="cursor-pointer shadow-xs text-[10px] sm:text-xs py-1 px-2.5" onClick={() => setIsSettingsOpen(true)}>
-                <Sheet className="w-3 h-3 mr-1" />
-                Apps Script Live
+              <Badge variant="success" className="shadow-xs text-[10px] sm:text-xs py-1 px-2.5 select-none">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5" />
+                Live Cloud Sync
               </Badge>
             ) : (
-              <Badge variant="default" className="cursor-pointer shadow-xs text-[10px] sm:text-xs py-1 px-2.5" onClick={() => setIsSettingsOpen(true)}>
+              <Badge variant="default" className="shadow-xs text-[10px] sm:text-xs py-1 px-2.5 select-none">
                 <Server className="w-3 h-3 mr-1" />
                 Local Engine
               </Badge>
             )}
-
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
-              title="Google Apps Script Web App Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
 
             {/* Mobile Hamburger Toggle Button */}
             <button
@@ -271,77 +222,6 @@ export default function App() {
           <Manage mode="customer" prefillCustomer={prefillCustomer} prefillProduct={prefillProduct} />
         )}
       </main>
-
-      {/* Settings Modal Dialog */}
-      <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sheet className="w-5 h-5 text-emerald-600" />
-              Google Apps Script Web App Connection
-            </DialogTitle>
-            <DialogDescription>
-              Connect your Google Apps Script Web App URL to sync directly with your Google Sheet.
-            </DialogDescription>
-          </DialogHeader>
-
-          {connectMessage && (
-            <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-              connectMessage.type === 'success' 
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-                : 'bg-rose-50 border-rose-200 text-rose-800'
-            }`}>
-              {connectMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-              {connectMessage.text}
-            </div>
-          )}
-
-          <form onSubmit={handleConnectAppsScript} className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700">Google Apps Script Web App URL</label>
-              <input
-                type="text"
-                value={scriptUrlInput}
-                onChange={(e) => setScriptUrlInput(e.target.value)}
-                placeholder="https://script.google.com/macros/s/.../exec"
-                className="w-full h-11 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300"
-              />
-              <p className="text-[11px] text-slate-400">
-                Created in Google Sheets via <strong>Extensions &gt; Apps Script &gt; Deploy &gt; New deployment &gt; Web app</strong>.
-              </p>
-            </div>
-
-            <div className="pt-2 flex justify-between gap-2">
-              {isAppsScriptConnected && (
-                <button
-                  type="button"
-                  onClick={handleDisconnectAppsScript}
-                  className="px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200"
-                >
-                  Disconnect Apps Script
-                </button>
-              )}
-
-              <div className="flex gap-2 ml-auto">
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100"
-                >
-                  Close
-                </button>
-                <button
-                  type="submit"
-                  disabled={isConnecting}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
-                >
-                  {isConnecting ? 'Connecting...' : 'Connect Apps Script'}
-                </button>
-              </div>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

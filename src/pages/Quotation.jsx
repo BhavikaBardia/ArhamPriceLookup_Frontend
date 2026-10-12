@@ -3,12 +3,14 @@ import { api } from '../api';
 import { SearchableCustomerSelect, SearchableProductSelect } from '../components/ui/SearchableSelect';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
+import aecLogo from '../assets/logo.png';
 import {
   FileText, Download, Printer, Plus, Trash2, ArrowUp, ArrowDown,
   Sparkles, User, Tag, Calendar, Hash, Percent, DollarSign,
   CheckCircle2, AlertCircle, RefreshCw, Eye, Edit3, Image, FileSpreadsheet,
-  Building2, Phone, Mail, MapPin, Copy, Layers
+  Building2, Phone, Mail, MapPin, Copy, Layers, Save,
+  ShoppingBag, Check, Search, History, Clock, ArrowRight, CheckCircle
 } from 'lucide-react';
 
 // Common Indian UOMs (Units of Measure)
@@ -44,6 +46,57 @@ function numberToIndianWords(num) {
   return res + ' Only';
 }
 
+// Helper: Format Date as YYYY-MM-DD (removes GMT/timezone text)
+function formatDateOnly(val) {
+  if (!val) return '';
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const day = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  const s = String(val).trim();
+  if (!s || s === 'N/A' || s === 'null' || s === 'undefined') return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (s.includes('GMT') || s.includes('Standard Time') || s.includes('UTC') || s.includes('T') || s.length > 10) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+  if (s.includes('T')) {
+    return s.split('T')[0];
+  }
+  return s;
+}
+
+// Helper: Generate guaranteed unique quotation number
+function generateUniqueQuotationNo(existingList = []) {
+  const now = new Date();
+  const yr = now.getFullYear();
+  const mo = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const ms = String(now.getMilliseconds()).padStart(3, '0');
+  const rnd = Math.floor(100 + Math.random() * 900); // 3 random digits
+  let code = `ARH-QT-${yr}${mo}${day}-${hh}${mm}${ss}${ms}-${rnd}`;
+  if (Array.isArray(existingList) && existingList.length > 0) {
+    const existingSet = new Set(existingList.map(q => String(q.quotation_no || '').trim().toUpperCase()));
+    let extra = 1;
+    while (existingSet.has(code.toUpperCase())) {
+      code = `ARH-QT-${yr}${mo}${day}-${hh}${mm}${ss}${ms}-${rnd}-${extra}`;
+      extra++;
+    }
+  }
+  return code;
+}
+
 export function Quotation({ initialCustomerId = '' }) {
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -62,15 +115,9 @@ export function Quotation({ initialCustomerId = '' }) {
       setSelectedCustomerId(initialCustomerId);
     }
   }, [initialCustomerId]);
-  
-  // Quotation Metadata
-  const [quotationNo, setQuotationNo] = useState(() => {
-    const d = new Date();
-    const yr = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, '0');
-    const rnd = Math.floor(1000 + Math.random() * 9000);
-    return `ARH-QT-${yr}${mo}-${rnd}`;
-  });
+
+  // Quotation Metadata (Always Guaranteed Unique)
+  const [quotationNo, setQuotationNo] = useState(() => generateUniqueQuotationNo());
 
   const [quotationDate, setQuotationDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [validUntil, setValidUntil] = useState(() => {
@@ -78,7 +125,7 @@ export function Quotation({ initialCustomerId = '' }) {
     d.setDate(d.getDate() + 30);
     return d.toISOString().split('T')[0];
   });
-  
+
   // Line Items
   const [items, setItems] = useState([
     {
@@ -86,11 +133,11 @@ export function Quotation({ initialCustomerId = '' }) {
       product_id: '',
       product_name: '',
       make: '',
-      description: '',
       uom: 'Nos',
       qty: 1,
       rate: '',
       total: 0,
+      remark: '',
       isCustomPrice: false
     }
   ]);
@@ -105,10 +152,60 @@ export function Quotation({ initialCustomerId = '' }) {
     '1. Prices are valid for 30 days from the quotation date.\n2. Payment Terms: 100% advance or as agreed.\n3. Delivery: Ex-stock or within 7-10 working days upon confirmed P.O.\n4. GST will be charged extra as applicable.'
   );
 
-  // View mode: 'builder' or 'preview'
+  // View mode: 'builder', 'preview', or 'saved'
   const [activeTab, setActiveTab] = useState('builder');
   const [isExporting, setIsExporting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState(null);
   const [exportMessage, setExportMessage] = useState(null);
+
+  // Saved Quotations & Order Confirmation States
+  const [savedQuotations, setSavedQuotations] = useState([]);
+  const [isLoadingSavedQuotations, setIsLoadingSavedQuotations] = useState(false);
+  const [savedSearchQuery, setSavedSearchQuery] = useState('');
+  const [savedStatusFilter, setSavedStatusFilter] = useState('all'); // 'all', 'CONFIRMED', 'PENDING'
+  const [confirmOrderModal, setConfirmOrderModal] = useState(null);
+  const [isConfirmingOrder, setIsConfirmingOrder] = useState(false);
+  const [currentOrderStatus, setCurrentOrderStatus] = useState(null);
+  const [currentConfirmedAt, setCurrentConfirmedAt] = useState(null);
+  const isOrderConfirmed = currentOrderStatus === 'CONFIRMED';
+
+  // Start a fresh, unique quotation
+  const handleNewQuotation = () => {
+    const newNo = generateUniqueQuotationNo(savedQuotations);
+    setQuotationNo(newNo);
+    setQuotationDate(new Date().toISOString().split('T')[0]);
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    setValidUntil(d.toISOString().split('T')[0]);
+    setItems([
+      {
+        id: Date.now(),
+        product_id: '',
+        product_name: '',
+        make: '',
+        uom: 'Nos',
+        qty: 1,
+        rate: '',
+        total: 0,
+        remark: '',
+        isCustomPrice: false
+      }
+    ]);
+    setDiscountType('percent');
+    setDiscountValue(0);
+    setTaxType('cgst_sgst_18');
+    setCurrentOrderStatus(null);
+    setCurrentConfirmedAt(null);
+    setLastSavedTime(null);
+    setActiveTab('builder');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setExportMessage({
+      type: 'info',
+      text: `Created new quotation draft: ${newNo}`
+    });
+    setTimeout(() => setExportMessage(null), 4000);
+  };
 
   const previewPaperRef = useRef(null);
 
@@ -232,8 +329,8 @@ export function Quotation({ initialCustomerId = '' }) {
         const rowCid = String(pr.customer_id || pr['Customer ID'] || '').trim().toUpperCase();
         return rowCid === cidUpper;
       }).map(pr => {
-        const rawPrice = pr.customer_price !== undefined && pr.customer_price !== null 
-          ? pr.customer_price 
+        const rawPrice = pr.customer_price !== undefined && pr.customer_price !== null
+          ? pr.customer_price
           : (pr.price !== undefined && pr.price !== null ? pr.price : pr['Customer Price']);
         return {
           product_id: String(pr.product_id || pr['Product ID'] || '').trim(),
@@ -268,7 +365,7 @@ export function Quotation({ initialCustomerId = '' }) {
   const selectedCustomer = useMemo(() => {
     if (!selectedCustomerId) return null;
     const cidStr = String(selectedCustomerId).trim().toUpperCase();
-    return customers.find(c => String(c.customer_id || '').trim().toUpperCase() === cidStr) 
+    return customers.find(c => String(c.customer_id || '').trim().toUpperCase() === cidStr)
       || customers.find(c => String(c.customer_name || '').trim().toUpperCase() === cidStr)
       || null;
   }, [customers, selectedCustomerId]);
@@ -287,7 +384,7 @@ export function Quotation({ initialCustomerId = '' }) {
 
     if (activeFromLookup.length > 0) {
       return activeFromLookup.map(item => {
-        const matchedProd = products.find(p => 
+        const matchedProd = products.find(p =>
           String(p.product_id).trim().toUpperCase() === String(item.product_id).trim().toUpperCase()
         );
         const raw = item.price !== undefined && item.price !== null ? item.price : item.customer_price;
@@ -310,8 +407,8 @@ export function Quotation({ initialCustomerId = '' }) {
       }).map(pr => {
         const pid = String(pr.product_id || pr['Product ID'] || '').trim();
         const matchedProd = products.find(p => String(p.product_id).trim().toUpperCase() === pid.toUpperCase());
-        const raw = pr.customer_price !== undefined && pr.customer_price !== null 
-          ? pr.customer_price 
+        const raw = pr.customer_price !== undefined && pr.customer_price !== null
+          ? pr.customer_price
           : (pr.price !== undefined && pr.price !== null ? pr.price : pr['Customer Price']);
         const cleanStr = raw !== null && raw !== undefined && raw !== '' ? String(raw).replace(/[^0-9\.]/g, '') : '';
         const num = cleanStr ? parseFloat(cleanStr) : NaN;
@@ -350,8 +447,8 @@ export function Quotation({ initialCustomerId = '' }) {
         allPricingCache.forEach(pr => {
           const rowCid = String(pr.customer_id || pr['Customer ID'] || '').trim().toUpperCase();
           if (rowCid === cidUpper) {
-            const raw = pr.customer_price !== undefined && pr.customer_price !== null 
-              ? pr.customer_price 
+            const raw = pr.customer_price !== undefined && pr.customer_price !== null
+              ? pr.customer_price
               : (pr.price !== undefined && pr.price !== null ? pr.price : pr['Customer Price']);
             const cleanStr = raw !== null && raw !== undefined && raw !== '' ? String(raw).replace(/[^0-9\.]/g, '') : '';
             const num = cleanStr ? parseFloat(cleanStr) : NaN;
@@ -377,9 +474,9 @@ export function Quotation({ initialCustomerId = '' }) {
 
   // Handle product selection in a row
   const handleProductSelect = (index, prodId) => {
-    const selectedProd = allDropdownProducts.find(p => 
+    const selectedProd = allDropdownProducts.find(p =>
       String(p.product_id).trim().toUpperCase() === String(prodId).trim().toUpperCase()
-    ) || products.find(p => 
+    ) || products.find(p =>
       String(p.product_id).trim().toUpperCase() === String(prodId).trim().toUpperCase()
     );
     if (!selectedProd) return;
@@ -437,11 +534,11 @@ export function Quotation({ initialCustomerId = '' }) {
         product_id: '',
         product_name: '',
         make: '',
-        description: '',
         uom: 'Nos',
         qty: 1,
         rate: '',
         total: 0,
+        remark: '',
         isCustomPrice: false
       }
     ]);
@@ -456,11 +553,11 @@ export function Quotation({ initialCustomerId = '' }) {
         product_id: '',
         product_name: '',
         make: '',
-        description: '',
         uom: 'Nos',
         qty: 1,
         rate: '',
         total: 0,
+        remark: '',
         isCustomPrice: false
       }]);
       return;
@@ -504,11 +601,11 @@ export function Quotation({ initialCustomerId = '' }) {
       product_id: cp.product_id,
       product_name: cp.standard_name,
       make: cp.make || '',
-      description: '',
       uom: 'Nos',
       qty: 1,
       rate: Number(cp.price),
       total: Number(cp.price),
+      remark: '',
       isCustomPrice: true
     }));
 
@@ -577,31 +674,31 @@ export function Quotation({ initialCustomerId = '' }) {
         ['ARHAM ENGG CO.'],
         ['Distributors & Suppliers of Industrial & Electrical Items'],
         ['OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI\'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.'],
-        ['Email: ravibardia@hotmail.com'],
+        ['GSTIN: 33ADPPB7680M1Z3 | Email: ravibardia@hotmail.com'],
         ['Commercial Product Price Quotation'],
         [''],
         ['Quotation No:', quotationNo, '', 'Date:', quotationDate],
         ['Customer Name:', custName, '', 'Valid Until:', validUntil],
         ['GSTIN:', custGstin, '', 'Currency:', 'INR (₹)'],
         [''],
-        ['#', 'Item / Product Name', 'Make / Brand', 'Description / Specs', 'UOM', 'Qty', 'Unit Rate (₹)', 'Total Amount (₹)'],
+        ['#', 'Item / Product Name', 'Make / Brand', 'UOM', 'Qty', 'Unit Rate (₹)', 'Total Amount (₹)', 'Remark'],
         ...items.map((item, idx) => [
           idx + 1,
           item.product_name || 'Custom Product',
           item.make || '-',
-          item.description || '-',
           item.uom || 'Nos',
           Number(item.qty) || 0,
           Number(item.rate) || 0,
-          Number(item.total) || 0
+          Number(item.total) || 0,
+          item.remark || '-'
         ]),
         [''],
-        ['', '', '', '', '', '', 'Subtotal (₹):', subtotal],
-        ['', '', '', '', '', '', `Discount (${discountType === 'percent' ? discountValue + '%' : 'Flat ₹'}):`, discountAmount],
-        ['', '', '', '', '', '', 'Taxable Value (₹):', taxableAmount],
-        ['', '', '', '', '', '', taxDetails.label + ':', taxDetails.totalTax],
-        ['', '', '', '', '', '', 'Round Off (₹):', roundOff],
-        ['', '', '', '', '', '', 'Grand Total (₹):', grandTotal],
+        ['', '', '', '', '', 'Subtotal (₹):', subtotal],
+        ['', '', '', '', '', `Discount (${discountType === 'percent' ? discountValue + '%' : 'Flat ₹'}):`, discountAmount],
+        ['', '', '', '', '', 'Taxable Value (₹):', taxableAmount],
+        ['', '', '', '', '', taxDetails.label + ':', taxDetails.totalTax],
+        ['', '', '', '', '', 'Round Off (₹):', roundOff],
+        ['', '', '', '', '', 'Grand Total (₹):', grandTotal],
         [''],
         ['Amount in Words:', amountInWords],
         [''],
@@ -612,13 +709,13 @@ export function Quotation({ initialCustomerId = '' }) {
       const ws = XLSX.utils.aoa_to_sheet(data);
       ws['!cols'] = [
         { wch: 6 },
-        { wch: 32 },
+        { wch: 35 },
         { wch: 18 },
-        { wch: 25 },
         { wch: 10 },
         { wch: 10 },
         { wch: 16 },
-        { wch: 18 }
+        { wch: 18 },
+        { wch: 25 }
       ];
 
       const wb = XLSX.utils.book_new();
@@ -641,22 +738,33 @@ export function Quotation({ initialCustomerId = '' }) {
       setIsExporting(true);
       setExportMessage({ type: 'info', text: 'Rendering high-resolution image...' });
 
-      // Switch to preview view if in builder
-      const targetEl = document.getElementById('quotation-letterhead-paper');
+      // If currently on builder tab, switch to preview so the document is mounted
+      let targetEl = document.getElementById('quotation-letterhead-paper');
+      if (!targetEl || activeTab === 'builder') {
+        setActiveTab('preview');
+        await new Promise(resolve => setTimeout(resolve, 350));
+        targetEl = document.getElementById('quotation-letterhead-paper');
+      }
+
       if (!targetEl) {
         throw new Error('Quotation paper view not found');
+      }
+
+      if (document.fonts) {
+        await document.fonts.ready;
       }
 
       const canvas = await html2canvas(targetEl, {
         scale: 2.5,
         useCORS: true,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        logging: false
       });
 
       const imgData = canvas.toDataURL('image/png');
       const custName = selectedCustomer?.customer_name || 'Customer';
       const a = document.createElement('a');
-      a.download = `Quotation_${quotationNo}_${custName.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+      a.download = `Quotation_${quotationNo || 'Q'}_${custName.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
       a.href = imgData;
       a.click();
 
@@ -676,25 +784,60 @@ export function Quotation({ initialCustomerId = '' }) {
       setIsExporting(true);
       setExportMessage({ type: 'info', text: 'Generating PDF document...' });
 
-      const targetEl = document.getElementById('quotation-letterhead-paper');
+      // If currently on builder tab, switch to preview tab so document is mounted and laid out
+      let targetEl = document.getElementById('quotation-letterhead-paper');
+      if (!targetEl || activeTab === 'builder') {
+        setActiveTab('preview');
+        await new Promise(resolve => setTimeout(resolve, 350));
+        targetEl = document.getElementById('quotation-letterhead-paper');
+      }
+
       if (!targetEl) {
-        throw new Error('Quotation paper view not found');
+        throw new Error('Quotation preview document could not be rendered');
+      }
+
+      if (document.fonts) {
+        await document.fonts.ready;
       }
 
       const canvas = await html2canvas(targetEl, {
-        scale: 2.5,
+        scale: 2,
         useCORS: true,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        logging: false
       });
 
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const PDFConstructor = typeof jsPDF === 'function' ? jsPDF : (jsPDF?.jsPDF || window.jspdf?.jsPDF);
+      if (!PDFConstructor) {
+        throw new Error('PDF generator library not available');
+      }
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const pdf = new PDFConstructor('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      if (imgHeight <= pdfHeight) {
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+      } else {
+        // Multi-page PDF handling
+        let heightLeft = imgHeight;
+        let position = 0;
+
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+        heightLeft -= pdfHeight;
+
+        while (heightLeft > 0) {
+          position = position - pdfHeight;
+          pdf.addPage();
+          pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+          heightLeft -= pdfHeight;
+        }
+      }
+
       const custName = selectedCustomer?.customer_name || 'Customer';
-      pdf.save(`Quotation_${quotationNo}_${custName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+      pdf.save(`Quotation_${quotationNo || 'Q'}_${custName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
 
       setExportMessage({ type: 'success', text: 'Quotation PDF downloaded successfully!' });
       setTimeout(() => setExportMessage(null), 3000);
@@ -706,8 +849,289 @@ export function Quotation({ initialCustomerId = '' }) {
     }
   };
 
+  // Save Quotation to Google Sheets ('Quotations' sheet)
+  const handleSaveToSheets = async () => {
+    if (isOrderConfirmed) {
+      setExportMessage({ type: 'error', text: 'This quotation has already been confirmed as an order and cannot be modified.' });
+      return;
+    }
+
+    if (!selectedCustomerId) {
+      setExportMessage({ type: 'error', text: 'Please select a customer before saving the quotation.' });
+      return;
+    }
+
+    const validItems = items.filter(it => it.product_name || it.product_id || (parseFloat(it.rate) > 0));
+    if (validItems.length === 0) {
+      setExportMessage({ type: 'error', text: 'Please add at least one valid line item to the quotation.' });
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setExportMessage({ type: 'info', text: 'Saving quotation to Google Sheets...' });
+
+      const payload = {
+        quotation_no: quotationNo,
+        quotation_date: quotationDate,
+        valid_until: validUntil,
+        customer_id: selectedCustomer?.customer_id || selectedCustomerId || '',
+        customer_name: selectedCustomer?.customer_name || 'Valued Customer',
+        customer_gstin: selectedCustomer?.gstin || '',
+        subtotal: subtotal,
+        discount_amount: discountAmount,
+        taxable_amount: taxableAmount,
+        tax_rate: taxDetails.rate,
+        tax_amount: taxDetails.totalTax,
+        round_off: roundOff,
+        grand_total: grandTotal,
+        terms: terms,
+        order_status: currentOrderStatus || 'PENDING',
+        confirmed_at: currentConfirmedAt || '',
+        items: items.map(it => ({
+          product_id: it.product_id || '',
+          product_name: it.product_name || 'Custom Product',
+          make: it.make || '',
+          uom: it.uom || 'Nos',
+          qty: Number(it.qty) || 0,
+          rate: Number(it.rate) || 0,
+          total: Number(it.total) || 0,
+          remark: it.remark || ''
+        }))
+      };
+
+      const res = await api.saveQuotation(payload);
+      const timeStr = new Date().toLocaleTimeString();
+      setLastSavedTime(timeStr);
+      await loadSavedQuotations();
+      setExportMessage({
+        type: 'success',
+        text: `✓ Quotation ${quotationNo} saved to Google Sheets ('Quotations' sheet) successfully at ${timeStr}!`
+      });
+      setTimeout(() => setExportMessage(null), 5000);
+    } catch (err) {
+      console.error('Failed to save quotation to Google Sheets:', err);
+      setExportMessage({
+        type: 'error',
+        text: 'Failed to save to Google Sheets: ' + (err.message || 'Connection error')
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Load all saved quotations from Google Sheets / API
+  const loadSavedQuotations = async () => {
+    setIsLoadingSavedQuotations(true);
+    try {
+      const data = await api.getQuotations();
+      if (Array.isArray(data)) {
+        const sorted = [...data].sort((a, b) => {
+          const tA = new Date(a.saved_at || a.quotation_date || 0).getTime();
+          const tB = new Date(b.saved_at || b.quotation_date || 0).getTime();
+          return tB - tA;
+        });
+        setSavedQuotations(sorted);
+      }
+    } catch (err) {
+      console.error('Failed to load saved quotations:', err);
+    } finally {
+      setIsLoadingSavedQuotations(false);
+    }
+  };
+
+  // Load a saved quotation into builder state to edit
+  const handleLoadQuotation = (q) => {
+    if (!q) return;
+
+    if (q.quotation_no) setQuotationNo(q.quotation_no);
+    if (q.quotation_date) setQuotationDate(formatDateOnly(q.quotation_date));
+    if (q.valid_until) setValidUntil(formatDateOnly(q.valid_until));
+    if (q.customer_id) setSelectedCustomerId(q.customer_id);
+    if (q.terms) setTerms(q.terms);
+
+    if (q.discount_amount !== undefined && Number(q.discount_amount) > 0) {
+      setDiscountType('flat');
+      setDiscountValue(Number(q.discount_amount));
+    } else {
+      setDiscountValue(0);
+    }
+
+    if (q.tax_rate !== undefined) {
+      const tr = Number(q.tax_rate);
+      if (tr === 18) setTaxType('cgst_sgst_18');
+      else if (tr === 12) setTaxType('gst_12');
+      else if (tr === 5) setTaxType('gst_5');
+      else if (tr === 0) setTaxType('exempt');
+      else setTaxType('cgst_sgst_18');
+    }
+
+    if (Array.isArray(q.items) && q.items.length > 0) {
+      const loadedItems = q.items.map((it, idx) => ({
+        id: Date.now() + idx,
+        product_id: it.product_id || '',
+        product_name: it.product_name || '',
+        make: it.make || '',
+        uom: it.uom || 'Nos',
+        qty: Number(it.qty) || 1,
+        rate: it.rate !== undefined && it.rate !== '' ? Number(it.rate) : '',
+        total: Number(it.total) || 0,
+        remark: it.remark || '',
+        isCustomPrice: false
+      }));
+      setItems(loadedItems);
+    }
+
+    const isConf = String(q.order_status || '').toUpperCase() === 'CONFIRMED';
+    setCurrentOrderStatus(isConf ? 'CONFIRMED' : 'PENDING');
+    setCurrentConfirmedAt(q.confirmed_at ? formatDateOnly(q.confirmed_at) : null);
+    setLastSavedTime(q.saved_at ? formatDateOnly(q.saved_at) : null);
+
+    setActiveTab('builder');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    setExportMessage({
+      type: isConf ? 'info' : 'success',
+      text: isConf
+        ? `✓ Viewing Confirmed Order ${q.quotation_no}. Prices and items are permanently locked.`
+        : `✓ Quotation ${q.quotation_no} loaded successfully! You can make edits, re-save to sheet, or confirm the order.`
+    });
+    setTimeout(() => setExportMessage(null), 5000);
+  };
+
+  // Initiate Order Confirmation (opens modal)
+  const handleInitiateConfirmOrder = (targetQuotation = null) => {
+    if (isOrderConfirmed || (targetQuotation && String(targetQuotation.order_status || '').toUpperCase() === 'CONFIRMED')) {
+      setExportMessage({ type: 'error', text: 'This quotation order has already been confirmed and cannot be re-confirmed.' });
+      return;
+    }
+
+    if (targetQuotation) {
+      setConfirmOrderModal(targetQuotation);
+      return;
+    }
+
+    if (!selectedCustomerId) {
+      setExportMessage({ type: 'error', text: 'Please select a customer before confirming the order.' });
+      return;
+    }
+
+    const validItems = items.filter(it => (it.product_name || it.product_id) && (parseFloat(it.rate) > 0));
+    if (validItems.length === 0) {
+      setExportMessage({ type: 'error', text: 'Please add items with valid rates to confirm the order.' });
+      return;
+    }
+
+    setConfirmOrderModal({
+      quotation_no: quotationNo,
+      customer_id: selectedCustomer?.customer_id || selectedCustomerId,
+      customer_name: selectedCustomer?.customer_name || 'Customer',
+      grand_total: grandTotal,
+      items: validItems
+    });
+  };
+
+  // Execute Order Confirmation: updates customer pricing and price history in Google Sheets
+  const handleExecuteConfirmOrder = async () => {
+    if (!confirmOrderModal) return;
+
+    const cid = confirmOrderModal.customer_id || selectedCustomerId;
+    if (!cid) {
+      setExportMessage({ type: 'error', text: 'Customer ID is required to confirm the order.' });
+      return;
+    }
+
+    const rawItems = confirmOrderModal.items || [];
+    const validItems = rawItems.filter(it => (it.product_name || it.product_id) && (parseFloat(it.rate !== undefined ? it.rate : it.price) > 0));
+
+    if (validItems.length === 0) {
+      setExportMessage({ type: 'error', text: 'No items with valid rates found to update pricing.' });
+      return;
+    }
+
+    try {
+      setIsConfirmingOrder(true);
+      const payload = {
+        quotation_no: confirmOrderModal.quotation_no,
+        customer_id: cid,
+        customer_name: confirmOrderModal.customer_name || selectedCustomer?.customer_name || '',
+        items: validItems.map(it => ({
+          product_id: it.product_id || '',
+          product_name: it.product_name || '',
+          rate: Number(it.rate !== undefined ? it.rate : it.price) || 0
+        }))
+      };
+
+      const res = await api.confirmOrder(payload);
+
+      if (confirmOrderModal.quotation_no === quotationNo) {
+        setCurrentOrderStatus('CONFIRMED');
+        setCurrentConfirmedAt(new Date().toLocaleTimeString());
+      }
+
+      // Reload pricing & quotations
+      await Promise.all([
+        loadCustomerPrices(cid),
+        loadSavedQuotations()
+      ]);
+
+      const updatedCount = res.updated_count !== undefined ? res.updated_count : validItems.length;
+
+      setConfirmOrderModal(null);
+      setExportMessage({
+        type: 'success',
+        text: `✓ Order confirmed for Quotation ${payload.quotation_no}! Updated catalog pricing for ${updatedCount} item(s) with full price history in Google Sheets.`
+      });
+      setTimeout(() => setExportMessage(null), 8000);
+    } catch (err) {
+      console.error('Failed to confirm order:', err);
+      setExportMessage({
+        type: 'error',
+        text: 'Failed to confirm order: ' + (err.message || 'Connection error')
+      });
+    } finally {
+      setIsConfirmingOrder(false);
+    }
+  };
+
+  // Filtered saved quotations
+  const filteredSavedQuotations = useMemo(() => {
+    return savedQuotations.filter(q => {
+      if (savedStatusFilter === 'CONFIRMED' && String(q.order_status || '').toUpperCase() !== 'CONFIRMED') {
+        return false;
+      }
+      if (savedStatusFilter === 'PENDING' && String(q.order_status || '').toUpperCase() === 'CONFIRMED') {
+        return false;
+      }
+      if (savedSearchQuery.trim()) {
+        const query = savedSearchQuery.trim().toLowerCase();
+        const qNo = String(q.quotation_no || '').toLowerCase();
+        const cName = String(q.customer_name || '').toLowerCase();
+        const cId = String(q.customer_id || '').toLowerCase();
+        const hasItem = Array.isArray(q.items) && q.items.some(it =>
+          String(it.product_name || '').toLowerCase().includes(query) ||
+          String(it.product_id || '').toLowerCase().includes(query)
+        );
+        return qNo.includes(query) || cName.includes(query) || cId.includes(query) || hasItem;
+      }
+      return true;
+    });
+  }, [savedQuotations, savedSearchQuery, savedStatusFilter]);
+
+  // Statistics for saved quotations (Only Confirmed & Pending)
+  const savedStats = useMemo(() => {
+    const total = savedQuotations.length;
+    const confirmed = savedQuotations.filter(q => String(q.order_status || '').toUpperCase() === 'CONFIRMED').length;
+    const pending = total - confirmed;
+    return { total, confirmed, pending };
+  }, [savedQuotations]);
+
   // Native Print
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    if (activeTab !== 'preview') {
+      setActiveTab('preview');
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
     window.print();
   };
 
@@ -730,25 +1154,41 @@ export function Quotation({ initialCustomerId = '' }) {
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setActiveTab('builder')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === 'builder'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'builder'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <Edit3 className="w-3.5 h-3.5" />
               1. Edit & Configure
             </button>
             <button
               onClick={() => setActiveTab('preview')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                activeTab === 'preview'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'preview'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
-              }`}
+                }`}
             >
               <Eye className="w-3.5 h-3.5" />
               2. Letterhead Preview
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('saved');
+                loadSavedQuotations();
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'saved'
+                  ? 'bg-white text-indigo-700 shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+                }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              3. Saved Quotations
+              {savedQuotations.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full">
+                  {savedQuotations.length}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -756,13 +1196,12 @@ export function Quotation({ initialCustomerId = '' }) {
 
       {/* Export Feedback Alert */}
       {exportMessage && (
-        <div className={`p-4 rounded-xl text-xs flex items-center gap-2 border animate-in fade-in ${
-          exportMessage.type === 'success'
+        <div className={`p-4 rounded-xl text-xs flex items-center gap-2 border animate-in fade-in ${exportMessage.type === 'success'
             ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-semibold'
             : exportMessage.type === 'error'
-            ? 'bg-rose-50 border-rose-200 text-rose-800'
-            : 'bg-indigo-50 border-indigo-200 text-indigo-800'
-        }`}>
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-indigo-50 border-indigo-200 text-indigo-800'
+          }`}>
           {exportMessage.type === 'success' ? (
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           ) : exportMessage.type === 'error' ? (
@@ -781,7 +1220,20 @@ export function Quotation({ initialCustomerId = '' }) {
             <Sparkles className="w-4 h-4" />
           </div>
           <div>
-            <div className="text-xs text-indigo-200 font-medium">Grand Total (Incl. GST)</div>
+            <div className="text-xs text-indigo-200 font-medium flex items-center gap-2">
+              <span>Grand Total (Incl. GST)</span>
+              {lastSavedTime && (
+                <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/40">
+                  ✓ Saved to Sheet ({lastSavedTime})
+                </span>
+              )}
+              {currentOrderStatus === 'CONFIRMED' && (
+                <span className="text-[10px] text-emerald-300 font-bold bg-emerald-900/90 px-2 py-0.5 rounded-full border border-emerald-400/50 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  Order Confirmed
+                </span>
+              )}
+            </div>
             <div className="text-lg font-bold font-mono tracking-tight text-white flex items-center gap-1">
               ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               <span className="text-[11px] text-slate-300 font-normal">({items.length} items)</span>
@@ -790,6 +1242,56 @@ export function Quotation({ initialCustomerId = '' }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {isOrderConfirmed ? (
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Order Confirmed (Prices Locked)
+              </span>
+              <button
+                type="button"
+                onClick={handleNewQuotation}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all"
+                title="Create a fresh quotation with a new unique quotation number"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                New Quotation
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Save to Google Sheet Button */}
+              <button
+                onClick={handleSaveToSheets}
+                disabled={isSaving || isExporting}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
+                title="Save this quotation and all items to Google Sheets in 'Quotations' sheet"
+              >
+                {isSaving ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                {isSaving ? 'Saving to Sheet...' : 'Save to Google Sheet'}
+              </button>
+
+              {/* Confirm Order Button */}
+              <button
+                onClick={() => handleInitiateConfirmOrder()}
+                disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
+                title="Confirm order: permanently updates customer pricing in Google Sheets and preserves price history"
+              >
+                {isConfirmingOrder ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                ) : (
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                )}
+                {isConfirmingOrder ? 'Updating Prices...' : 'Confirm Order'}
+              </button>
+            </>
+          )}
+
           {/* Excel Export Button */}
           <button
             onClick={handleExportExcel}
@@ -834,11 +1336,46 @@ export function Quotation({ initialCustomerId = '' }) {
       {/* TAB 1: BUILDER / EDITOR VIEW */}
       {activeTab === 'builder' && (
         <div className="space-y-6">
+          {/* Confirmed Order Locked Banner */}
+          {isOrderConfirmed && (
+            <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-700 shrink-0">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-emerald-950 flex items-center gap-2">
+                    Confirmed Order #{quotationNo}
+                    <span className="text-[11px] font-semibold bg-emerald-200/80 text-emerald-800 px-2.5 py-0.5 rounded-full">
+                      Prices Locked & Synchronized
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-700 mt-0.5">
+                    This order has been confirmed{currentConfirmedAt ? ` (${currentConfirmedAt})` : ''}. All customer catalog prices were updated and cannot be edited, re-priced, or re-confirmed.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleNewQuotation}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Create New Quotation
+              </button>
+            </div>
+          )}
+
           {/* 1. Header Information Grid */}
           <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
               <User className="w-4 h-4 text-indigo-600" />
               Customer & Quotation Details
+              {isOrderConfirmed && (
+                <span className="ml-auto text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-md">
+                  Read Only
+                </span>
+              )}
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -846,16 +1383,18 @@ export function Quotation({ initialCustomerId = '' }) {
               <div className="sm:col-span-2 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700">Select Customer *</label>
-                  <button
-                    type="button"
-                    onClick={loadData}
-                    disabled={isInitialLoading}
-                    className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition-colors disabled:opacity-50"
-                    title="Reload customers and products"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${isInitialLoading ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </button>
+                  {!isOrderConfirmed && (
+                    <button
+                      type="button"
+                      onClick={loadData}
+                      disabled={isInitialLoading}
+                      className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition-colors disabled:opacity-50"
+                      title="Reload customers and products"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isInitialLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </button>
+                  )}
                 </div>
                 <SearchableCustomerSelect
                   customers={customers}
@@ -863,6 +1402,7 @@ export function Quotation({ initialCustomerId = '' }) {
                   onValueChange={setSelectedCustomerId}
                   placeholder="Search customer by name..."
                   isLoading={isInitialLoading}
+                  disabled={isOrderConfirmed}
                 />
                 {loadError && (
                   <p className="text-[11px] text-rose-600 flex items-center gap-1">
@@ -885,16 +1425,31 @@ export function Quotation({ initialCustomerId = '' }) {
 
               {/* Quotation Number */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
-                  <Hash className="w-3.5 h-3.5 text-slate-400" />
-                  Quotation Number
-                </label>
-                <input
-                  type="text"
-                  value={quotationNo}
-                  onChange={(e) => setQuotationNo(e.target.value)}
-                  className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all"
-                />
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                    <Hash className="w-3.5 h-3.5 text-slate-400" />
+                    Quotation Number
+                  </label>
+                  <span className="text-[10px] text-emerald-600 font-semibold">Guaranteed Unique</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={quotationNo}
+                    readOnly
+                    className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all select-all"
+                  />
+                  {!isOrderConfirmed && (
+                    <button
+                      type="button"
+                      onClick={() => setQuotationNo(generateUniqueQuotationNo(savedQuotations))}
+                      className="h-11 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl border border-slate-200 transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                      title="Generate new unique quotation number"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Dates Grid (Quotation Date & Valid Until) */}
@@ -907,9 +1462,10 @@ export function Quotation({ initialCustomerId = '' }) {
                     </label>
                     <input
                       type="date"
-                      value={quotationDate}
+                      value={formatDateOnly(quotationDate)}
                       onChange={(e) => setQuotationDate(e.target.value)}
-                      className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all"
+                      disabled={isOrderConfirmed}
+                      className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                   </div>
                   <div>
@@ -918,9 +1474,10 @@ export function Quotation({ initialCustomerId = '' }) {
                     </label>
                     <input
                       type="date"
-                      value={validUntil}
+                      value={formatDateOnly(validUntil)}
                       onChange={(e) => setValidUntil(e.target.value)}
-                      className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all"
+                      disabled={isOrderConfirmed}
+                      className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-2.5 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -941,94 +1498,94 @@ export function Quotation({ initialCustomerId = '' }) {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2">
-                {selectedCustomerId && (
+              {!isOrderConfirmed && (
+                <div className="flex items-center gap-2">
+                  {selectedCustomerId && (
+                    <button
+                      type="button"
+                      onClick={addAllPricedItems}
+                      disabled={customerPricedProducts.length === 0 || isPricesLoading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Load all products configured with a price for this customer"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      Load All Priced Items ({customerPricedProducts.length})
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={addAllPricedItems}
-                    disabled={customerPricedProducts.length === 0 || isPricesLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Load all products configured with a price for this customer"
+                    onClick={addItem}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
                   >
-                    <Layers className="w-3.5 h-3.5" />
-                    Load All Priced Items ({customerPricedProducts.length})
+                    <Plus className="w-4 h-4" />
+                    Add Line Item
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={addItem}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Line Item
-                </button>
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Line Items Table */}
             <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-left text-xs border-collapse min-w-[900px]">
+              <table className="w-full text-left text-xs border-collapse min-w-[1060px]">
                 <thead>
-                  <tr className="border-b border-slate-200 text-slate-600 bg-slate-50 font-bold tracking-wider">
-                    <th className="py-3 px-3 w-10 text-center">#</th>
-                    <th className="py-3 px-3 w-72">Product / Standard Name *</th>
-                    <th className="py-3 px-3 w-40">Make / Brand</th>
-                    <th className="py-3 px-3 w-32">UOM *</th>
-                    <th className="py-3 px-3 w-24">Qty *</th>
-                    <th className="py-3 px-3 w-36">Unit Rate (₹) *</th>
-                    <th className="py-3 px-3 w-36 text-right">Total Amount (₹)</th>
-                    <th className="py-3 px-3 w-20 text-center">Actions</th>
+                  <tr className="border-b border-slate-200 text-slate-700 bg-slate-50 font-bold tracking-wider">
+                    <th className="py-2.5 px-2.5 w-10 text-center">#</th>
+                    <th className="py-2.5 px-2.5 w-72">Product / Standard Name *</th>
+                    <th className="py-2.5 px-2.5 w-36">Make / Brand</th>
+                    <th className="py-2.5 px-2.5 w-24">UOM *</th>
+                    <th className="py-2.5 px-2.5 w-20">Qty *</th>
+                    <th className="py-2.5 px-2.5 w-32">Unit Rate (₹) *</th>
+                    <th className="py-2.5 px-2.5 w-32 text-right">Total Amount (₹)</th>
+                    <th className="py-2.5 px-2.5 min-w-[170px]">Remark</th>
+                    <th className="py-2.5 px-2.5 w-20 text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {items.map((item, idx) => (
                     <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
                       {/* Row Index */}
-                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">
+                      <td className="py-2 px-2.5 text-center font-mono font-bold text-slate-400">
                         {idx + 1}
                       </td>
 
-                      {/* Product Name & Search (All Products with Customer Prices auto-attached) */}
-                      <td className="py-3 px-3">
-                        <div className="space-y-1">
+                      {/* Product Name & Search (Strict single-line, fixed width) */}
+                      <td className="py-2 px-2.5 w-72 max-w-[288px]">
+                        <div className="w-full min-w-0">
                           <SearchableProductSelect
                             products={allDropdownProducts}
                             value={item.product_id}
                             onValueChange={(pid) => handleProductSelect(idx, pid)}
-                            placeholder="Select or search product..."
+                            placeholder="Select product..."
                             isLoading={isInitialLoading}
-                          />
-                          <input
-                            type="text"
-                            value={item.description}
-                            onChange={(e) => updateItemField(idx, 'description', e.target.value)}
-                            placeholder="Optional specifications / notes..."
-                            className="w-full h-8 bg-slate-50 border border-slate-200 text-slate-800 text-[11px] rounded-lg px-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 focus:bg-white"
+                            compact={true}
+                            disabled={isOrderConfirmed}
                           />
                         </div>
                       </td>
 
                       {/* Make / Brand */}
-                      <td className="py-3 px-3">
+                      <td className="py-2 px-2.5 w-36">
                         <input
                           type="text"
                           value={item.make}
                           onChange={(e) => updateItemField(idx, 'make', e.target.value)}
-                          placeholder="e.g. Siemens"
-                          className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-semibold rounded-lg px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                          disabled={isOrderConfirmed}
+                          placeholder="Make / Brand"
+                          className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-medium rounded-lg px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                         />
                       </td>
 
-                      {/* UOM (Unit of Measure) */}
-                      <td className="py-3 px-3">
+                      {/* UOM */}
+                      <td className="py-2 px-2.5 w-24">
                         <div className="relative">
                           <input
                             type="text"
                             list={`uom-options-${idx}`}
                             value={item.uom}
                             onChange={(e) => updateItemField(idx, 'uom', e.target.value)}
+                            disabled={isOrderConfirmed}
                             placeholder="Nos"
-                            className="w-full h-9 bg-slate-50 border border-slate-300 text-slate-900 font-bold rounded-lg px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                            className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-bold rounded-lg px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                           />
                           <datalist id={`uom-options-${idx}`}>
                             {COMMON_UOMS.map(u => (
@@ -1039,75 +1596,96 @@ export function Quotation({ initialCustomerId = '' }) {
                       </td>
 
                       {/* Quantity */}
-                      <td className="py-3 px-3">
+                      <td className="py-2 px-2.5 w-20">
                         <input
                           type="number"
                           min="0"
                           step="any"
                           value={item.qty}
                           onChange={(e) => updateItemField(idx, 'qty', e.target.value)}
-                          className="w-full h-9 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-lg px-2.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                          disabled={isOrderConfirmed}
+                          className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-mono font-bold rounded-lg px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
                         />
                       </td>
 
                       {/* Unit Rate (₹) */}
-                      <td className="py-3 px-3">
+                      <td className="py-2 px-2.5 w-32">
                         <div className="relative">
+                          <span className="absolute left-2.5 top-2.5 text-slate-400 font-mono text-xs font-semibold">₹</span>
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={item.rate}
                             onChange={(e) => updateItemField(idx, 'rate', e.target.value)}
+                            disabled={isOrderConfirmed}
                             placeholder="0.00"
-                            className="w-full h-9 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-lg pl-6 pr-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                            className={`w-full h-9 bg-slate-50 border text-slate-900 font-mono font-bold rounded-lg pl-6 pr-6 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed ${item.isCustomPrice ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200'
+                              }`}
                           />
-                          <span className="absolute left-2.5 top-2 text-slate-400 font-mono text-xs font-semibold">₹</span>
+                          {item.isCustomPrice && (
+                            <span
+                              title="Configured customer catalog price applied"
+                              className="absolute right-2 top-3 w-2 h-2 rounded-full bg-emerald-500 shadow-xs"
+                            />
+                          )}
                         </div>
-                        {item.isCustomPrice && (
-                          <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">
-                            ✓ Customer Price
-                          </div>
-                        )}
                       </td>
 
                       {/* Total Amount (₹) */}
-                      <td className="py-3 px-3 text-right">
-                        <div className="font-mono font-bold text-slate-900 text-sm">
+                      <td className="py-2 px-2.5 w-32 text-right">
+                        <div className="h-9 flex items-center justify-end font-mono font-bold text-slate-900 text-xs">
                           ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </td>
 
+                      {/* Remark */}
+                      <td className="py-2 px-2.5 min-w-[170px]">
+                        <input
+                          type="text"
+                          value={item.remark || ''}
+                          onChange={(e) => updateItemField(idx, 'remark', e.target.value)}
+                          disabled={isOrderConfirmed}
+                          placeholder="Remark / specifications..."
+                          className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-lg px-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                        />
+                      </td>
+
                       {/* Row Actions */}
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => moveItemUp(idx)}
-                            disabled={idx === 0}
-                            title="Move Up"
-                            className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
-                          >
-                            <ArrowUp className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveItemDown(idx)}
-                            disabled={idx === items.length - 1}
-                            title="Move Down"
-                            className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
-                          >
-                            <ArrowDown className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeItem(idx)}
-                            title="Remove Line Item"
-                            className="p-1 rounded hover:bg-rose-100 text-rose-500 hover:text-rose-700 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                      <td className="py-2 px-2.5 w-20 text-center">
+                        {isOrderConfirmed ? (
+                          <span className="text-slate-300 text-xs font-mono">-</span>
+                        ) : (
+                          <div className="h-9 flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => moveItemUp(idx)}
+                              disabled={idx === 0}
+                              title="Move Up"
+                              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
+                            >
+                              <ArrowUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveItemDown(idx)}
+                              disabled={idx === items.length - 1}
+                              title="Move Down"
+                              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 disabled:opacity-20 cursor-pointer"
+                            >
+                              <ArrowDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeItem(idx)}
+                              disabled={items.length === 1}
+                              title="Remove Line Item"
+                              className="p-1.5 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-600 disabled:opacity-20 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1115,14 +1693,16 @@ export function Quotation({ initialCustomerId = '' }) {
               </table>
             </div>
 
-            <button
-              type="button"
-              onClick={addItem}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 text-xs font-semibold w-full justify-center transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Add Another Line Item
-            </button>
+            {!isOrderConfirmed && (
+              <button
+                type="button"
+                onClick={addItem}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 text-xs font-semibold w-full justify-center transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Add Another Line Item
+              </button>
+            )}
           </div>
 
           {/* 3. Tax, Discount & Summary Grid */}
@@ -1141,7 +1721,8 @@ export function Quotation({ initialCustomerId = '' }) {
                   <select
                     value={taxType}
                     onChange={(e) => setTaxType(e.target.value)}
-                    className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                    disabled={isOrderConfirmed}
+                    className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-semibold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <option value="cgst_sgst_18">GST 18% (CGST 9% + SGST 9%) - Intra-state</option>
                     <option value="igst_18">IGST 18% - Inter-state</option>
@@ -1155,23 +1736,25 @@ export function Quotation({ initialCustomerId = '' }) {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                     <label>Discount</label>
-                    <div className="flex items-center gap-2 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => setDiscountType('percent')}
-                        className={`font-bold ${discountType === 'percent' ? 'text-indigo-600' : 'text-slate-400'}`}
-                      >
-                        % Percent
-                      </button>
-                      <span>|</span>
-                      <button
-                        type="button"
-                        onClick={() => setDiscountType('flat')}
-                        className={`font-bold ${discountType === 'flat' ? 'text-indigo-600' : 'text-slate-400'}`}
-                      >
-                        ₹ Flat
-                      </button>
-                    </div>
+                    {!isOrderConfirmed && (
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setDiscountType('percent')}
+                          className={`font-bold ${discountType === 'percent' ? 'text-indigo-600' : 'text-slate-400'}`}
+                        >
+                          % Percent
+                        </button>
+                        <span>|</span>
+                        <button
+                          type="button"
+                          onClick={() => setDiscountType('flat')}
+                          className={`font-bold ${discountType === 'flat' ? 'text-indigo-600' : 'text-slate-400'}`}
+                        >
+                          ₹ Flat
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <input
                     type="number"
@@ -1179,8 +1762,9 @@ export function Quotation({ initialCustomerId = '' }) {
                     step="any"
                     value={discountValue}
                     onChange={(e) => setDiscountValue(e.target.value)}
+                    disabled={isOrderConfirmed}
                     placeholder="0"
-                    className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                    className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -1192,7 +1776,8 @@ export function Quotation({ initialCustomerId = '' }) {
                   rows={4}
                   value={terms}
                   onChange={(e) => setTerms(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white"
+                  disabled={isOrderConfirmed}
+                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -1282,6 +1867,45 @@ export function Quotation({ initialCustomerId = '' }) {
                   <span className="font-semibold text-slate-700 not-italic">In Words: </span>
                   {amountInWords}
                 </div>
+
+                {isOrderConfirmed ? (
+                  <div className="space-y-2 pt-2">
+                    <div className="p-3 bg-emerald-100/80 border border-emerald-300 rounded-xl text-center text-xs font-bold text-emerald-800 flex items-center justify-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Order Confirmed - Prices Permanently Locked
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleNewQuotation}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Create New Quotation
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleSaveToSheets}
+                      disabled={isSaving || isExporting}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSaving ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Save className="w-4 h-4" />}
+                      {isSaving ? 'Saving to Google Sheet...' : 'Save Quotation to Google Sheet'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleInitiateConfirmOrder()}
+                      disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/20 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {isConfirmingOrder ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <ShoppingBag className="w-4 h-4" />}
+                      {isConfirmingOrder ? 'Updating Pricing in Sheet...' : 'Confirm Order & Update Customer Prices'}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1312,53 +1936,51 @@ export function Quotation({ initialCustomerId = '' }) {
             style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
           >
             <div>
-              {/* Header: Company Name & Brand */}
+              {/* Header: Company Name, Logo & Brand */}
               <div className="flex flex-col sm:flex-row items-start justify-between border-b-2 border-indigo-600 pb-6 mb-6 gap-4">
-                <div className="max-w-md">
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                    <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-md text-xl font-black">A</span>
-                    ARHAM ENGG CO.
-                  </h1>
-                  <p className="text-xs font-semibold text-indigo-700 uppercase tracking-widest mt-1">
-                    Distributors & Suppliers of Industrial & Electrical Items
-                  </p>
-                  <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
-                    OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.
-                  </p>
-                  <p className="text-[11px] text-slate-700 font-medium mt-1">
-                    Email: <span className="font-semibold text-slate-900">ravibardia@hotmail.com</span>
-                  </p>
+                <div className="flex items-start gap-4 max-w-lg">
+                  <img
+                    src={aecLogo}
+                    alt="ARHAM ENGG CO."
+                    className="h-16 w-auto object-contain shrink-0"
+                  />
+                  <div>
+                    <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                      ARHAM ENGG CO.
+                    </h1>
+                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-widest mt-0.5">
+                      Distributors & Suppliers of Industrial & Electrical Items
+                    </p>
+                    <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
+                      OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-slate-700 font-medium mt-1">
+                      <span>GSTIN: <strong className="font-mono text-slate-900 font-bold">33ADPPB7680M1Z3</strong></span>
+                      <span>Email: <strong className="font-semibold text-slate-900">ravibardia@hotmail.com</strong></span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="text-right space-y-1 self-end sm:self-start">
+                <div className="text-right space-y-1 self-end sm:self-start shrink-0">
                   <div className="inline-block px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 font-extrabold text-sm uppercase tracking-wider rounded">
                     QUOTATION
                   </div>
                   <div className="text-xs font-mono font-bold text-slate-800">{quotationNo}</div>
-                  <div className="text-[11px] text-slate-500">Date: <strong className="text-slate-800">{quotationDate}</strong></div>
-                  <div className="text-[11px] text-slate-500">Valid Till: <strong className="text-slate-800">{validUntil}</strong></div>
+                  <div className="text-[11px] text-slate-500">Date: <strong className="text-slate-800">{formatDateOnly(quotationDate)}</strong></div>
+                  <div className="text-[11px] text-slate-500">Valid Till: <strong className="text-slate-800">{formatDateOnly(validUntil)}</strong></div>
                 </div>
               </div>
 
-              {/* Customer & Bill-To Section */}
-              <div className="grid grid-cols-2 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs mb-6">
-                <div>
-                  <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">QUOTATION TO:</div>
-                  <div className="font-bold text-sm text-slate-900">{selectedCustomer?.customer_name || 'Valued Customer'}</div>
-                  {selectedCustomer?.gstin && (
-                    <div className="text-slate-600 mt-0.5">GSTIN: <strong className="font-mono text-slate-800">{selectedCustomer.gstin}</strong></div>
-                  )}
-                  {selectedCustomer?.address && (
-                    <div className="text-slate-500 text-[11px] mt-1">{selectedCustomer.address}</div>
-                  )}
-                </div>
-
-                <div className="text-right">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">SUPPLIER DETAILS:</div>
-                  <div className="font-bold text-xs text-slate-800">ARHAM ENGG CO.</div>
-                  <div className="text-slate-600 text-[11px] mt-0.5">Chennai - 600001, Tamil Nadu</div>
-                  <div className="text-slate-600 text-[11px]">Email: ravibardia@hotmail.com</div>
-                </div>
+              {/* Customer / Quotation-To Section (Supplier details removed as requested) */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs mb-6">
+                <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">QUOTATION TO:</div>
+                <div className="font-bold text-sm text-slate-900">{selectedCustomer?.customer_name || 'Valued Customer'}</div>
+                {selectedCustomer?.gstin && (
+                  <div className="text-slate-600 mt-0.5">GSTIN: <strong className="font-mono text-slate-800">{selectedCustomer.gstin}</strong></div>
+                )}
+                {selectedCustomer?.address && (
+                  <div className="text-slate-500 text-[11px] mt-1 leading-relaxed max-w-xl">{selectedCustomer.address}</div>
+                )}
               </div>
 
               {/* Items Table */}
@@ -1368,22 +1990,20 @@ export function Quotation({ initialCustomerId = '' }) {
                     <tr className="border-y-2 border-slate-800 bg-slate-100 text-slate-800 font-bold uppercase text-[10px] tracking-wider">
                       <th className="py-2.5 px-2 w-8 text-center">#</th>
                       <th className="py-2.5 px-3">Item Description</th>
-                      <th className="py-2.5 px-2 w-28">Make</th>
-                      <th className="py-2.5 px-2 w-16 text-center">UOM</th>
-                      <th className="py-2.5 px-2 w-16 text-center">Qty</th>
+                      <th className="py-2.5 px-2 w-24">Make</th>
+                      <th className="py-2.5 px-2 w-14 text-center">UOM</th>
+                      <th className="py-2.5 px-2 w-14 text-center">Qty</th>
                       <th className="py-2.5 px-3 w-24 text-right">Rate (₹)</th>
-                      <th className="py-2.5 px-3 w-28 text-right">Amount (₹)</th>
+                      <th className="py-2.5 px-3 w-24 text-right">Amount (₹)</th>
+                      <th className="py-2.5 px-3 w-28">Remark</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {items.map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-50/50">
                         <td className="py-2.5 px-2 text-center text-slate-400 font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3">
-                          <div className="font-bold text-slate-900">{item.product_name || 'Item'}</div>
-                          {item.description && (
-                            <div className="text-[11px] text-slate-500 italic">{item.description}</div>
-                          )}
+                        <td className="py-2.5 px-3 font-bold text-slate-900">
+                          {item.product_name || 'Item'}
                         </td>
                         <td className="py-2.5 px-2 font-medium text-slate-700">{item.make || '-'}</td>
                         <td className="py-2.5 px-2 text-center font-bold text-slate-800">{item.uom || 'Nos'}</td>
@@ -1393,6 +2013,9 @@ export function Quotation({ initialCustomerId = '' }) {
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
                           ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 text-[11px] italic">
+                          {item.remark || '-'}
                         </td>
                       </tr>
                     ))}
@@ -1472,7 +2095,6 @@ export function Quotation({ initialCustomerId = '' }) {
             {/* Footer / Signatures */}
             <div className="pt-6 border-t border-slate-200 flex justify-between items-end text-xs text-slate-500">
               <div>
-                <p>Thank you for your business!</p>
                 <p className="text-[10px] text-slate-400">This is a computer generated quotation.</p>
               </div>
 
@@ -1486,6 +2108,425 @@ export function Quotation({ initialCustomerId = '' }) {
           </div>
         </div>
       </div>
+
+      {/* TAB 3: SAVED QUOTATIONS VIEW */}
+      {activeTab === 'saved' && (
+        <div className="space-y-6">
+          {/* Top summary header with statistics */}
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-indigo-600" />
+                  Saved Quotations Catalog
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  View and manage all quotations saved to Google Sheets. Load any quotation to modify and re-save, or confirm the order to update customer pricing with automatic price history.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-start md:self-auto">
+                <button
+                  onClick={loadSavedQuotations}
+                  disabled={isLoadingSavedQuotations}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
+                  title="Reload quotations from Google Sheets"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSavedQuotations ? 'animate-spin text-indigo-600' : ''}`} />
+                  {isLoadingSavedQuotations ? 'Syncing...' : 'Refresh List'}
+                </button>
+                <button
+                  onClick={() => setActiveTab('builder')}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  New Quotation
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Metrics (Confirmed Orders & Pending Confirmation Only) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200/60 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Confirmed Orders
+                  </div>
+                  <div className="text-2xl font-bold text-emerald-900 mt-1">{savedStats.confirmed}</div>
+                </div>
+                <div className="text-[11px] text-emerald-700/80 font-medium bg-emerald-100/60 px-2.5 py-1 rounded-lg">
+                  Prices locked & updated
+                </div>
+              </div>
+              <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200/60 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    Pending Confirmation
+                  </div>
+                  <div className="text-2xl font-bold text-amber-900 mt-1">{savedStats.pending}</div>
+                </div>
+                <div className="text-[11px] text-amber-700/80 font-medium bg-amber-100/60 px-2.5 py-1 rounded-lg">
+                  Awaiting confirmation
+                </div>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search by Quotation #, Customer Name, or Product..."
+                  value={savedSearchQuery}
+                  onChange={(e) => setSavedSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold self-start sm:self-auto">
+                <button
+                  onClick={() => setSavedStatusFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                >
+                  All ({savedStats.total})
+                </button>
+                <button
+                  onClick={() => setSavedStatusFilter('CONFIRMED')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'CONFIRMED'
+                      ? 'bg-white text-emerald-700 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                >
+                  Confirmed ({savedStats.confirmed})
+                </button>
+                <button
+                  onClick={() => setSavedStatusFilter('PENDING')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'PENDING'
+                      ? 'bg-white text-amber-700 shadow-xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                >
+                  Pending ({savedStats.pending})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quotations List */}
+          {isLoadingSavedQuotations ? (
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-12 text-center shadow-xs">
+              <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />
+              <div className="text-sm font-bold text-slate-800">Loading saved quotations from Google Sheets...</div>
+              <p className="text-xs text-slate-500 mt-1">Fetching your quotation records and line items</p>
+            </div>
+          ) : filteredSavedQuotations.length === 0 ? (
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-12 text-center shadow-xs">
+              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
+                <FileText className="w-7 h-7" />
+              </div>
+              <div className="text-sm font-bold text-slate-800">
+                {savedQuotations.length === 0 ? 'No Saved Quotations Found' : 'No matching quotations found'}
+              </div>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                {savedQuotations.length === 0
+                  ? 'Build a quotation in the Edit & Configure tab and click "Save to Google Sheet" to store it permanently.'
+                  : 'Try clearing your search query or switching the status filter.'}
+              </p>
+              {savedQuotations.length === 0 && (
+                <button
+                  onClick={() => setActiveTab('builder')}
+                  className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-500 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Create Your First Quotation
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredSavedQuotations.map((q) => {
+                const isConfirmed = String(q.order_status || '').toUpperCase() === 'CONFIRMED';
+                const itemsCount = Array.isArray(q.items) ? q.items.length : 0;
+
+                return (
+                  <div
+                    key={q.quotation_no}
+                    className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs hover:border-indigo-200 transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-5"
+                  >
+                    <div className="space-y-3 flex-1 min-w-0">
+                      {/* Top status & Quotation No line */}
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="font-mono text-sm font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200/80">
+                          {q.quotation_no}
+                        </span>
+
+                        {isConfirmed ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            ORDER CONFIRMED
+                            {q.confirmed_at && (
+                              <span className="font-normal text-[10px] text-emerald-700">({formatDateOnly(q.confirmed_at)})</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            PENDING ORDER CONFIRMATION
+                          </span>
+                        )}
+
+                        <span className="text-[11px] text-slate-400">
+                          Date: <span className="font-medium text-slate-700">{formatDateOnly(q.quotation_date) || 'N/A'}</span>
+                        </span>
+                        {q.valid_until && (
+                          <span className="text-[11px] text-slate-400">
+                            Valid Till: <span className="font-medium text-slate-700">{formatDateOnly(q.valid_until)}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Customer Name & Info (Customer ID removed as requested) */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                          {q.customer_name || 'Customer'}
+                        </div>
+                        {q.customer_gstin && (
+                          <div className="text-[11px] text-slate-500">
+                            GSTIN: <span className="font-mono">{q.customer_gstin}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Items Preview Chips */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[11px] font-semibold text-slate-500 mr-1">
+                          {itemsCount} item{itemsCount === 1 ? '' : 's'}:
+                        </span>
+                        {(q.items || []).slice(0, 4).map((it, idx) => (
+                          <span
+                            key={idx}
+                            className="text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200/80 max-w-[200px] truncate"
+                            title={`${it.product_name} - ₹${it.rate} x ${it.qty} ${it.uom}`}
+                          >
+                            {it.product_name || `Item ${idx + 1}`} ({it.qty} {it.uom})
+                          </span>
+                        ))}
+                        {itemsCount > 4 && (
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            +{itemsCount - 4} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Right side: Amount & Action Buttons */}
+                    <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+                      <div className="text-left lg:text-right">
+                        <div className="text-[11px] text-slate-400 font-medium">Grand Total (Incl. GST)</div>
+                        <div className="text-xl font-bold font-mono text-indigo-700">
+                          ₹{Number(q.grand_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isConfirmed ? (
+                          <>
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              Order Confirmed (Locked)
+                            </span>
+
+                            {/* View Letterhead Preview Button */}
+                            <button
+                              onClick={() => {
+                                handleLoadQuotation(q);
+                                setActiveTab('preview');
+                              }}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-all cursor-pointer shadow-2xs"
+                              title="View quotation letterhead & export"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                              View Quotation
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {/* Load & Edit Button */}
+                            <button
+                              onClick={() => handleLoadQuotation(q)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/80 transition-all cursor-pointer shadow-2xs"
+                              title="Load this quotation into the builder to edit, change items, or re-calculate"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                              Load & Edit
+                            </button>
+
+                            {/* Confirm Order Button */}
+                            <button
+                              onClick={() => handleInitiateConfirmOrder(q)}
+                              disabled={isConfirmingOrder}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20"
+                              title="Confirm order: permanently updates customer catalog pricing and adds old prices to Price History"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                              Confirm Order
+                            </button>
+
+                            {/* Letterhead Preview Button */}
+                            <button
+                              onClick={() => {
+                                handleLoadQuotation(q);
+                                setActiveTab('preview');
+                              }}
+                              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer"
+                              title="View on company letterhead"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-slate-500" />
+                              Preview
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CONFIRM ORDER MODAL */}
+      {confirmOrderModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 my-8">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 tracking-tight">
+                    Confirm Quotation Order
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Quotation #{confirmOrderModal.quotation_no} • {confirmOrderModal.customer_name}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setConfirmOrderModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Price History & Catalog Info Banner */}
+            <div className="p-3.5 bg-emerald-50/80 rounded-xl border border-emerald-200 text-xs text-emerald-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-emerald-800">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                Automated Customer Price Update & Price History
+              </div>
+              <p className="leading-relaxed text-emerald-950/80">
+                Confirming this order will permanently update customer pricing in your Google Sheet / catalog for each item below. Previous prices are safely moved to <strong>Previous Price</strong> and archived with date in <strong>Price History</strong>.
+              </p>
+            </div>
+
+            {/* Items List Preview */}
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                <span>Line Items to Update ({confirmOrderModal.items?.length || 0}):</span>
+                {confirmOrderModal.grand_total && (
+                  <span className="font-mono text-indigo-700">
+                    Grand Total: ₹{Number(confirmOrderModal.grand_total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </span>
+                )}
+              </div>
+
+              <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
+                {(confirmOrderModal.items || []).map((it, idx) => {
+                  const rateVal = Number(it.rate !== undefined ? it.rate : it.price) || 0;
+                  const existingRec = (customerPrices || []).find(cp =>
+                    (cp.product_id && it.product_id && String(cp.product_id).toUpperCase() === String(it.product_id).toUpperCase()) ||
+                    (cp.standard_name && it.product_name && String(cp.standard_name).toUpperCase() === String(it.product_name).toUpperCase())
+                  );
+                  const currentPrice = existingRec ? parseFloat(existingRec.price) : null;
+                  const isChanged = currentPrice !== null && !isNaN(currentPrice) && currentPrice !== rateVal;
+
+                  return (
+                    <div key={idx} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/80">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-slate-800 truncate">
+                          {it.product_name || `Item ${idx + 1}`}
+                        </div>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                          {it.product_id && <span className="font-mono">ID: {it.product_id}</span>}
+                          <span>Qty: {it.qty || 1} {it.uom || 'Nos'}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="font-mono font-bold text-emerald-700">
+                          ₹{rateVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {existingRec && !isNaN(currentPrice) ? (
+                            isChanged ? (
+                              <span className="text-amber-600 font-medium">
+                                Was: ₹{currentPrice.toFixed(2)} → History
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">Current matches</span>
+                            )
+                          ) : (
+                            <span className="text-indigo-600 font-medium">New catalog price</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConfirmOrderModal(null)}
+                disabled={isConfirmingOrder}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExecuteConfirmOrder}
+                disabled={isConfirmingOrder}
+                className="flex items-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/20 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isConfirmingOrder ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                {isConfirmingOrder ? 'Updating Pricing in Sheet...' : 'Yes, Confirm Order & Update Pricing'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

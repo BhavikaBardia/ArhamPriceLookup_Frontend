@@ -283,7 +283,7 @@ export function PriceLookup({ onNavigateToManage, onNavigateToQuotation }) {
           <div className="py-12 text-center border border-indigo-100 rounded-xl bg-indigo-50/40 space-y-3">
             <RefreshCw className="w-8 h-8 mx-auto animate-spin text-indigo-600" />
             <p className="text-sm font-bold text-indigo-900">Loading products for customer...</p>
-            <p className="text-xs text-indigo-600/80 font-medium">Fetching prices from Google Apps Script</p>
+            <p className="text-xs text-indigo-600/80 font-medium">Fetching customer pricing records...</p>
           </div>
         ) : productsList.length === 0 ? (
           <div className="py-12 text-center text-slate-400 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">

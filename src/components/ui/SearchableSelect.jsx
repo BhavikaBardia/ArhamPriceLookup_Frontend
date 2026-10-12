@@ -46,7 +46,7 @@ function getFuzzyScore(query, target) {
   return wordScoreSum / qWords.length;
 }
 
-export function SearchableCustomerSelect({ customers = [], value, onValueChange, placeholder = "Search & select customer...", isLoading = false }) {
+export function SearchableCustomerSelect({ customers = [], value, onValueChange, placeholder = "Search & select customer...", isLoading = false, disabled = false }) {
   const [open, setOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const inputRef = useRef(null);
@@ -94,7 +94,7 @@ export function SearchableCustomerSelect({ customers = [], value, onValueChange,
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
-          disabled={isLoading}
+          disabled={isLoading || disabled}
           className="flex h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all text-left shadow-sm disabled:cursor-not-allowed disabled:bg-slate-50"
         >
           {isLoading ? (
@@ -178,7 +178,16 @@ export function SearchableCustomerSelect({ customers = [], value, onValueChange,
   );
 }
 
-export function SearchableProductSelect({ products = [], value, onValueChange, placeholder = "Search & select product...", isLoading = false }) {
+export function SearchableProductSelect({ 
+  products = [], 
+  value, 
+  onValueChange, 
+  placeholder = "Search & select product...", 
+  isLoading = false,
+  compact = false,
+  className = "",
+  disabled = false
+}) {
   const [open, setOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
   const inputRef = useRef(null);
@@ -226,27 +235,30 @@ export function SearchableProductSelect({ products = [], value, onValueChange, p
       <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
-          disabled={isLoading}
-          className="flex h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all text-left shadow-sm disabled:cursor-not-allowed disabled:bg-slate-50"
+          disabled={isLoading || disabled}
+          className={compact 
+            ? `flex h-9 w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 hover:bg-white px-2.5 py-1 text-xs text-slate-800 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all text-left shadow-xs disabled:cursor-not-allowed disabled:bg-slate-50 min-w-0 ${className}`
+            : `flex h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all text-left shadow-sm disabled:cursor-not-allowed disabled:bg-slate-50 min-w-0 ${className}`
+          }
         >
           {isLoading ? (
-            <div className="flex items-center gap-2 truncate">
-              <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin shrink-0" />
-              <span className="text-slate-400 font-medium">Loading products...</span>
+            <div className="flex items-center gap-1.5 min-w-0 truncate">
+              <RefreshCw className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-indigo-600 animate-spin shrink-0`} />
+              <span className="text-slate-400 font-medium truncate">{compact ? 'Loading...' : 'Loading products...'}</span>
             </div>
           ) : selectedProduct ? (
-            <div className="flex items-center gap-2 truncate">
-              <span className="font-semibold text-slate-900 truncate">{selectedProduct.standard_name}</span>
-              {selectedProduct.make && (
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden" title={selectedProduct.standard_name}>
+              <span className="font-semibold text-slate-900 truncate block text-xs">{selectedProduct.standard_name}</span>
+              {!compact && selectedProduct.make && (
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 shrink-0">
                   Make: {selectedProduct.make}
                 </span>
               )}
             </div>
           ) : (
-            <span className="text-slate-400">{placeholder}</span>
+            <span className="text-slate-400 text-xs truncate">{placeholder}</span>
           )}
-          <ChevronDown className="h-4 w-4 opacity-50 ml-2 shrink-0 transition-transform duration-200" />
+          <ChevronDown className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} opacity-50 ml-1.5 shrink-0 transition-transform duration-200`} />
         </button>
       </PopoverPrimitive.Trigger>
 
