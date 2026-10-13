@@ -74,6 +74,58 @@ function formatDateOnly(val) {
   return s;
 }
 
+const DEFAULT_TERMS = '1. Prices are valid for 30 days from the quotation date.\n2. Payment Terms: 100% advance or as agreed.\n3. Delivery: Ex-stock or within 7-10 working days upon confirmed P.O.\n4. GST will be charged extra as applicable.';
+
+// Helper: Compute effective unit rate after item discount & quotation discount
+function computeItemDiscountedRate(item, quotationContext = null) {
+  if (!item) return 0;
+  const rawRate = Number(item.rate !== undefined && item.rate !== '' ? item.rate : (item.price !== undefined ? item.price : 0)) || 0;
+  if (rawRate <= 0) return 0;
+
+  let effectiveRate = rawRate;
+
+  // 1. If explicit discounted_rate is provided and valid
+  if (item.discounted_rate !== undefined && item.discounted_rate !== null && Number(item.discounted_rate) > 0 && Number(item.discounted_rate) < rawRate) {
+    effectiveRate = Number(item.discounted_rate);
+  } else {
+    // 2. Item-level discount (percentage or flat)
+    const dVal = parseFloat(item.discount_val !== undefined && item.discount_val !== '' ? item.discount_val : (item.discount !== undefined ? item.discount : 0)) || 0;
+    if (dVal > 0) {
+      if (item.discount_type === 'fixed') {
+        effectiveRate = Math.max(0, rawRate - dVal);
+      } else {
+        effectiveRate = Math.max(0, rawRate - (rawRate * dVal) / 100);
+      }
+    } else if (item.total && item.qty && Number(item.qty) > 0) {
+      // 3. Fallback: derive from total and qty
+      const impliedRate = Number(item.total) / Number(item.qty);
+      if (impliedRate > 0 && impliedRate < rawRate) {
+        effectiveRate = impliedRate;
+      }
+    }
+  }
+
+  // 4. Quotation-level discount context (if quotation has an overall discount)
+  if (quotationContext) {
+    const subtotal = Number(quotationContext.subtotal) || 0;
+    const discountAmount = Number(
+      quotationContext.discount_amount !== undefined 
+        ? quotationContext.discount_amount 
+        : (quotationContext.discountAmount !== undefined ? quotationContext.discountAmount : quotationContext.discountValue)
+    ) || 0;
+
+    if (discountAmount > 0 && subtotal > 0) {
+      const qDiscFraction = Math.min(1, Math.max(0, discountAmount / subtotal));
+      const hasItemDiscount = (parseFloat(item.discount_val) > 0) || (item.discounted_rate && Number(item.discounted_rate) < rawRate);
+      if (!hasItemDiscount) {
+        effectiveRate = Math.max(0, effectiveRate * (1 - qDiscFraction));
+      }
+    }
+  }
+
+  return Math.round(effectiveRate * 100) / 100;
+}
+
 // Helper: Generate guaranteed unique quotation number
 function generateUniqueQuotationNo(existingList = []) {
   const now = new Date();
@@ -97,7 +149,7 @@ function generateUniqueQuotationNo(existingList = []) {
   return code;
 }
 
-export function Quotation({ initialCustomerId = '' }) {
+export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }) {
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [customerPrices, setCustomerPrices] = useState([]);
@@ -136,6 +188,8 @@ export function Quotation({ initialCustomerId = '' }) {
       uom: 'Nos',
       qty: 1,
       rate: '',
+      discount_val: '',
+      discount_type: 'percent',
       total: 0,
       remark: '',
       isCustomPrice: false
@@ -148,9 +202,7 @@ export function Quotation({ initialCustomerId = '' }) {
   const [discountValue, setDiscountValue] = useState(0);
 
   // Terms & Notes
-  const [terms, setTerms] = useState(
-    '1. Prices are valid for 30 days from the quotation date.\n2. Payment Terms: 100% advance or as agreed.\n3. Delivery: Ex-stock or within 7-10 working days upon confirmed P.O.\n4. GST will be charged extra as applicable.'
-  );
+  const [terms, setTerms] = useState(DEFAULT_TERMS);
 
   // View mode: 'builder', 'preview', or 'saved'
   const [activeTab, setActiveTab] = useState('builder');
@@ -170,10 +222,11 @@ export function Quotation({ initialCustomerId = '' }) {
   const [currentConfirmedAt, setCurrentConfirmedAt] = useState(null);
   const isOrderConfirmed = currentOrderStatus === 'CONFIRMED';
 
-  // Start a fresh, unique quotation
+  // Start a fresh, unique quotation (clears builder & generates new unique Quotation No)
   const handleNewQuotation = () => {
     const newNo = generateUniqueQuotationNo(savedQuotations);
     setQuotationNo(newNo);
+    setSelectedCustomerId('');
     setQuotationDate(new Date().toISOString().split('T')[0]);
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -187,6 +240,8 @@ export function Quotation({ initialCustomerId = '' }) {
         uom: 'Nos',
         qty: 1,
         rate: '',
+        discount_val: '',
+        discount_type: 'percent',
         total: 0,
         remark: '',
         isCustomPrice: false
@@ -195,6 +250,7 @@ export function Quotation({ initialCustomerId = '' }) {
     setDiscountType('percent');
     setDiscountValue(0);
     setTaxType('cgst_sgst_18');
+    setTerms(DEFAULT_TERMS);
     setCurrentOrderStatus(null);
     setCurrentConfirmedAt(null);
     setLastSavedTime(null);
@@ -202,7 +258,7 @@ export function Quotation({ initialCustomerId = '' }) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     setExportMessage({
       type: 'info',
-      text: `Created new quotation draft: ${newNo}`
+      text: `✓ Refreshed page with new quotation #${newNo}`
     });
     setTimeout(() => setExportMessage(null), 4000);
   };
@@ -493,17 +549,17 @@ export function Quotation({ initialCustomerId = '' }) {
       const next = [...prevItems];
       const cur = next[index];
       const qty = parseFloat(cur.qty) || 1;
-      const rateNum = parseFloat(autoRate) || 0;
-
-      next[index] = {
+      const updatedItem = {
         ...cur,
         product_id: selectedProd.product_id,
         product_name: selectedProd.standard_name,
         make: selectedProd.make || '',
         rate: autoRate !== '' ? autoRate : (cur.rate || ''),
-        total: (qty * (autoRate !== '' ? rateNum : (parseFloat(cur.rate) || 0))),
         isCustomPrice: isCatalogPrice
       };
+      const effectiveRate = computeItemDiscountedRate(updatedItem);
+      updatedItem.total = qty * effectiveRate;
+      next[index] = updatedItem;
       return next;
     });
   };
@@ -514,11 +570,9 @@ export function Quotation({ initialCustomerId = '' }) {
       const next = [...prevItems];
       const item = { ...next[index], [field]: value };
 
-      if (field === 'qty' || field === 'rate') {
-        const q = parseFloat(field === 'qty' ? value : item.qty) || 0;
-        const r = parseFloat(field === 'rate' ? value : item.rate) || 0;
-        item.total = q * r;
-      }
+      const q = parseFloat(field === 'qty' ? value : item.qty) || 0;
+      const effectiveRate = computeItemDiscountedRate(item);
+      item.total = q * effectiveRate;
 
       next[index] = item;
       return next;
@@ -537,6 +591,8 @@ export function Quotation({ initialCustomerId = '' }) {
         uom: 'Nos',
         qty: 1,
         rate: '',
+        discount_val: '',
+        discount_type: 'percent',
         total: 0,
         remark: '',
         isCustomPrice: false
@@ -556,6 +612,8 @@ export function Quotation({ initialCustomerId = '' }) {
         uom: 'Nos',
         qty: 1,
         rate: '',
+        discount_val: '',
+        discount_type: 'percent',
         total: 0,
         remark: '',
         isCustomPrice: false
@@ -604,6 +662,8 @@ export function Quotation({ initialCustomerId = '' }) {
       uom: 'Nos',
       qty: 1,
       rate: Number(cp.price),
+      discount_val: '',
+      discount_type: 'percent',
       total: Number(cp.price),
       remark: '',
       isCustomPrice: true
@@ -681,17 +741,23 @@ export function Quotation({ initialCustomerId = '' }) {
         ['Customer Name:', custName, '', 'Valid Until:', validUntil],
         ['GSTIN:', custGstin, '', 'Currency:', 'INR (₹)'],
         [''],
-        ['#', 'Item / Product Name', 'Make / Brand', 'UOM', 'Qty', 'Unit Rate (₹)', 'Total Amount (₹)', 'Remark'],
-        ...items.map((item, idx) => [
-          idx + 1,
-          item.product_name || 'Custom Product',
-          item.make || '-',
-          item.uom || 'Nos',
-          Number(item.qty) || 0,
-          Number(item.rate) || 0,
-          Number(item.total) || 0,
-          item.remark || '-'
-        ]),
+        ['#', 'Item / Product Name', 'Make / Brand', 'UOM', 'Qty', 'Unit Rate (₹)', 'Disc', 'Net Rate (₹)', 'Total Amount (₹)', 'Remark'],
+        ...items.map((item, idx) => {
+          const discRate = computeItemDiscountedRate(item);
+          const discText = item.discount_val ? `${item.discount_val}${item.discount_type === 'fixed' ? '₹' : '%'}` : '0%';
+          return [
+            idx + 1,
+            item.product_name || 'Custom Product',
+            item.make || '-',
+            item.uom || 'Nos',
+            Number(item.qty) || 0,
+            Number(item.rate) || 0,
+            discText,
+            discRate,
+            Number(item.total) || 0,
+            item.remark || '-'
+          ];
+        }),
         [''],
         ['', '', '', '', '', 'Subtotal (₹):', subtotal],
         ['', '', '', '', '', `Discount (${discountType === 'percent' ? discountValue + '%' : 'Flat ₹'}):`, discountAmount],
@@ -869,7 +935,7 @@ export function Quotation({ initialCustomerId = '' }) {
 
     try {
       setIsSaving(true);
-      setExportMessage({ type: 'info', text: 'Saving quotation to Google Sheets...' });
+      setExportMessage({ type: 'info', text: 'Saving quotation...' });
 
       const payload = {
         quotation_no: quotationNo,
@@ -888,16 +954,22 @@ export function Quotation({ initialCustomerId = '' }) {
         terms: terms,
         order_status: currentOrderStatus || 'PENDING',
         confirmed_at: currentConfirmedAt || '',
-        items: items.map(it => ({
-          product_id: it.product_id || '',
-          product_name: it.product_name || 'Custom Product',
-          make: it.make || '',
-          uom: it.uom || 'Nos',
-          qty: Number(it.qty) || 0,
-          rate: Number(it.rate) || 0,
-          total: Number(it.total) || 0,
-          remark: it.remark || ''
-        }))
+        items: items.map(it => {
+          const discountedRate = computeItemDiscountedRate(it);
+          return {
+            product_id: it.product_id || '',
+            product_name: it.product_name || 'Custom Product',
+            make: it.make || '',
+            uom: it.uom || 'Nos',
+            qty: Number(it.qty) || 0,
+            rate: Number(it.rate) || 0,
+            discount_val: it.discount_val !== undefined && it.discount_val !== '' ? Number(it.discount_val) : 0,
+            discount_type: it.discount_type || 'percent',
+            discounted_rate: discountedRate,
+            total: Number(it.total) || 0,
+            remark: it.remark || ''
+          };
+        })
       };
 
       const res = await api.saveQuotation(payload);
@@ -906,14 +978,14 @@ export function Quotation({ initialCustomerId = '' }) {
       await loadSavedQuotations();
       setExportMessage({
         type: 'success',
-        text: `✓ Quotation ${quotationNo} saved to Google Sheets ('Quotations' sheet) successfully at ${timeStr}!`
+        text: `✓ Quotation ${quotationNo} saved successfully at ${timeStr}!`
       });
       setTimeout(() => setExportMessage(null), 5000);
     } catch (err) {
-      console.error('Failed to save quotation to Google Sheets:', err);
+      console.error('Failed to save quotation:', err);
       setExportMessage({
         type: 'error',
-        text: 'Failed to save to Google Sheets: ' + (err.message || 'Connection error')
+        text: 'Failed to save quotation: ' + (err.message || 'Connection error')
       });
     } finally {
       setIsSaving(false);
@@ -967,18 +1039,30 @@ export function Quotation({ initialCustomerId = '' }) {
     }
 
     if (Array.isArray(q.items) && q.items.length > 0) {
-      const loadedItems = q.items.map((it, idx) => ({
-        id: Date.now() + idx,
-        product_id: it.product_id || '',
-        product_name: it.product_name || '',
-        make: it.make || '',
-        uom: it.uom || 'Nos',
-        qty: Number(it.qty) || 1,
-        rate: it.rate !== undefined && it.rate !== '' ? Number(it.rate) : '',
-        total: Number(it.total) || 0,
-        remark: it.remark || '',
-        isCustomPrice: false
-      }));
+      const loadedItems = q.items.map((it, idx) => {
+        const r = it.rate !== undefined && it.rate !== '' ? Number(it.rate) : '';
+        const dVal = it.discount_val !== undefined && it.discount_val !== '' ? Number(it.discount_val) : (it.discount !== undefined ? Number(it.discount) : '');
+        const dType = it.discount_type || 'percent';
+        const loadedItem = {
+          id: Date.now() + idx,
+          product_id: it.product_id || '',
+          product_name: it.product_name || '',
+          make: it.make || '',
+          uom: it.uom || 'Nos',
+          qty: Number(it.qty) || 1,
+          rate: r,
+          discount_val: dVal,
+          discount_type: dType,
+          total: Number(it.total) || 0,
+          remark: it.remark || '',
+          isCustomPrice: false
+        };
+        const eff = computeItemDiscountedRate(loadedItem);
+        if (!loadedItem.total && r && it.qty) {
+          loadedItem.total = Number(it.qty) * eff;
+        }
+        return loadedItem;
+      });
       setItems(loadedItems);
     }
 
@@ -994,9 +1078,37 @@ export function Quotation({ initialCustomerId = '' }) {
       type: isConf ? 'info' : 'success',
       text: isConf
         ? `✓ Viewing Confirmed Order ${q.quotation_no}. Prices and items are permanently locked.`
-        : `✓ Quotation ${q.quotation_no} loaded successfully! You can make edits, re-save to sheet, or confirm the order.`
+        : `✓ Quotation ${q.quotation_no} loaded successfully! You can make edits, re-save, or confirm the order.`
     });
     setTimeout(() => setExportMessage(null), 5000);
+  };
+
+  // Apply Quotation Discount to all individual line items
+  const handleApplyQuotationDiscountToAll = () => {
+    const dVal = parseFloat(discountValue) || 0;
+    if (dVal <= 0) return;
+    setItems(prev => prev.map(it => {
+      const r = parseFloat(it.rate) || 0;
+      const q = parseFloat(it.qty) || 1;
+      let effectiveRate = r;
+      if (discountType === 'fixed') {
+        effectiveRate = Math.max(0, r - dVal);
+      } else {
+        effectiveRate = Math.max(0, r - (r * dVal) / 100);
+      }
+      return {
+        ...it,
+        discount_val: dVal,
+        discount_type: discountType,
+        total: Math.round(q * effectiveRate * 100) / 100
+      };
+    }));
+    setDiscountValue(0);
+    setExportMessage({
+      type: 'success',
+      text: `✓ Applied ${dVal}${discountType === 'percent' ? '%' : '₹'} discount across all line items. Line prices and totals updated.`
+    });
+    setTimeout(() => setExportMessage(null), 4000);
   };
 
   // Initiate Order Confirmation (opens modal)
@@ -1007,7 +1119,18 @@ export function Quotation({ initialCustomerId = '' }) {
     }
 
     if (targetQuotation) {
-      setConfirmOrderModal(targetQuotation);
+      // Ensure target quotation items have pre-calculated discounted rates
+      const preparedQuote = {
+        ...targetQuotation,
+        items: (targetQuotation.items || []).map(it => {
+          const effRate = computeItemDiscountedRate(it, targetQuotation);
+          return {
+            ...it,
+            discounted_rate: effRate
+          };
+        })
+      };
+      setConfirmOrderModal(preparedQuote);
       return;
     }
 
@@ -1022,12 +1145,24 @@ export function Quotation({ initialCustomerId = '' }) {
       return;
     }
 
+    const quoteContext = {
+      subtotal,
+      discount_amount: discountAmount,
+      discountValue,
+      discountType
+    };
+
     setConfirmOrderModal({
       quotation_no: quotationNo,
       customer_id: selectedCustomer?.customer_id || selectedCustomerId,
       customer_name: selectedCustomer?.customer_name || 'Customer',
       grand_total: grandTotal,
-      items: validItems
+      subtotal: subtotal,
+      discount_amount: discountAmount,
+      items: validItems.map(it => ({
+        ...it,
+        discounted_rate: computeItemDiscountedRate(it, quoteContext)
+      }))
     });
   };
 
@@ -1055,11 +1190,29 @@ export function Quotation({ initialCustomerId = '' }) {
         quotation_no: confirmOrderModal.quotation_no,
         customer_id: cid,
         customer_name: confirmOrderModal.customer_name || selectedCustomer?.customer_name || '',
-        items: validItems.map(it => ({
-          product_id: it.product_id || '',
-          product_name: it.product_name || '',
-          rate: Number(it.rate !== undefined ? it.rate : it.price) || 0
-        }))
+        items: validItems.map(it => {
+          // Compute net discounted rate for each item to update customer catalog!
+          const discountedRate = computeItemDiscountedRate(it, confirmOrderModal);
+          const originalRate = Number(it.rate !== undefined ? it.rate : it.price) || 0;
+
+          let pid = it.product_id;
+          if (!pid && it.product_name) {
+            const matched = (products || []).find(p =>
+              String(p.standard_name || '').trim().toUpperCase() === String(it.product_name).trim().toUpperCase()
+            );
+            if (matched) pid = matched.product_id;
+          }
+
+          return {
+            product_id: pid || '',
+            product_name: it.product_name || '',
+            rate: discountedRate, // Rate updated in customer catalog is the discounted price!
+            discounted_rate: discountedRate,
+            original_rate: originalRate,
+            discount_val: Number(it.discount_val) || 0,
+            discount_type: it.discount_type || 'percent'
+          };
+        })
       };
 
       const res = await api.confirmOrder(payload);
@@ -1069,7 +1222,16 @@ export function Quotation({ initialCustomerId = '' }) {
         setCurrentConfirmedAt(new Date().toLocaleTimeString());
       }
 
-      // Reload pricing & quotations
+      // Reload fresh pricing data from backend/sheets & quotations
+      try {
+        const freshData = await api.getAllData();
+        if (freshData?.pricing) {
+          setAllPricingCache(freshData.pricing);
+        }
+      } catch (err) {
+        console.warn('Could not refresh all pricing data cache:', err);
+      }
+
       await Promise.all([
         loadCustomerPrices(cid),
         loadSavedQuotations()
@@ -1080,9 +1242,11 @@ export function Quotation({ initialCustomerId = '' }) {
       setConfirmOrderModal(null);
       setExportMessage({
         type: 'success',
-        text: `✓ Order confirmed for Quotation ${payload.quotation_no}! Updated catalog pricing for ${updatedCount} item(s) with full price history in Google Sheets.`
+        text: `✓ Order confirmed for Quotation ${payload.quotation_no}! Updated customer catalog with discounted prices for ${updatedCount} item(s) and logged price history.`,
+        actionLabel: onNavigateToCatalog ? 'View in Customer Catalog →' : null,
+        onAction: onNavigateToCatalog ? () => onNavigateToCatalog(cid) : null
       });
-      setTimeout(() => setExportMessage(null), 8000);
+      setTimeout(() => setExportMessage(null), 10000);
     } catch (err) {
       console.error('Failed to confirm order:', err);
       setExportMessage({
@@ -1149,8 +1313,18 @@ export function Quotation({ initialCustomerId = '' }) {
           </p>
         </div>
 
-        {/* View Switcher: Builder vs Letterhead Preview */}
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        {/* View Switcher: Builder vs Letterhead Preview vs Saved & New Quotation */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={handleNewQuotation}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+            title="Create a fresh quotation and refresh form"
+          >
+            <Plus className="w-3.5 h-3.5 text-indigo-600" />
+            New Quotation
+          </button>
+
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setActiveTab('builder')}
@@ -1209,7 +1383,16 @@ export function Quotation({ initialCustomerId = '' }) {
           ) : (
             <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin shrink-0" />
           )}
-          {exportMessage.text}
+          <div className="flex-1">{exportMessage.text}</div>
+          {exportMessage.actionLabel && exportMessage.onAction && (
+            <button
+              type="button"
+              onClick={exportMessage.onAction}
+              className="ml-auto px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shrink-0 shadow-2xs"
+            >
+              {exportMessage.actionLabel}
+            </button>
+          )}
         </div>
       )}
 
@@ -1224,7 +1407,7 @@ export function Quotation({ initialCustomerId = '' }) {
               <span>Grand Total (Incl. GST)</span>
               {lastSavedTime && (
                 <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/40">
-                  ✓ Saved to Sheet ({lastSavedTime})
+                  ✓ Saved ({lastSavedTime})
                 </span>
               )}
               {currentOrderStatus === 'CONFIRMED' && (
@@ -1242,37 +1425,39 @@ export function Quotation({ initialCustomerId = '' }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* New Quotation Button (Always Available) */}
+          <button
+            type="button"
+            onClick={handleNewQuotation}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 shadow-xs cursor-pointer transition-all"
+            title="Create a fresh quotation with an automatically generated unique quotation number"
+          >
+            <Plus className="w-3.5 h-3.5 text-indigo-400" />
+            New Quotation
+          </button>
+
           {isOrderConfirmed ? (
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 Order Confirmed (Prices Locked)
               </span>
-              <button
-                type="button"
-                onClick={handleNewQuotation}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all"
-                title="Create a fresh quotation with a new unique quotation number"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Quotation
-              </button>
             </div>
           ) : (
             <>
-              {/* Save to Google Sheet Button */}
+              {/* Save Quotation Button */}
               <button
                 onClick={handleSaveToSheets}
                 disabled={isSaving || isExporting}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
-                title="Save this quotation and all items to Google Sheets in 'Quotations' sheet"
+                title="Save this quotation and line items"
               >
                 {isSaving ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
                 ) : (
                   <Save className="w-3.5 h-3.5" />
                 )}
-                {isSaving ? 'Saving to Sheet...' : 'Save to Google Sheet'}
+                {isSaving ? 'Saving...' : 'Save Quotation'}
               </button>
 
               {/* Confirm Order Button */}
@@ -1280,7 +1465,7 @@ export function Quotation({ initialCustomerId = '' }) {
                 onClick={() => handleInitiateConfirmOrder()}
                 disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
-                title="Confirm order: permanently updates customer pricing in Google Sheets and preserves price history"
+                title="Confirm order: permanently updates customer pricing and preserves price history"
               >
                 {isConfirmingOrder ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
@@ -1423,32 +1608,23 @@ export function Quotation({ initialCustomerId = '' }) {
                 )}
               </div>
 
-              {/* Quotation Number */}
+              {/* Quotation Number (Auto-generated Unique ID) */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
                     <Hash className="w-3.5 h-3.5 text-slate-400" />
                     Quotation Number
                   </label>
-                  <span className="text-[10px] text-emerald-600 font-semibold">Guaranteed Unique</span>
+                  <span className="text-[10px] text-slate-400 font-medium">Auto-generated</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div>
                   <input
                     type="text"
                     value={quotationNo}
                     readOnly
-                    className="w-full h-11 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all select-all"
+                    className="w-full h-11 bg-slate-100 border border-slate-200 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs select-all cursor-default focus:outline-none"
+                    title="Automatically generated unique quotation number"
                   />
-                  {!isOrderConfirmed && (
-                    <button
-                      type="button"
-                      onClick={() => setQuotationNo(generateUniqueQuotationNo(savedQuotations))}
-                      className="h-11 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl border border-slate-200 transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer shrink-0"
-                      title="Generate new unique quotation number"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -1526,17 +1702,18 @@ export function Quotation({ initialCustomerId = '' }) {
 
             {/* Line Items Table */}
             <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-left text-xs border-collapse min-w-[1060px]">
+              <table className="w-full text-left text-xs border-collapse min-w-[1140px]">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-700 bg-slate-50 font-bold tracking-wider">
                     <th className="py-2.5 px-2.5 w-10 text-center">#</th>
-                    <th className="py-2.5 px-2.5 w-72">Product / Standard Name *</th>
-                    <th className="py-2.5 px-2.5 w-36">Make / Brand</th>
-                    <th className="py-2.5 px-2.5 w-24">UOM *</th>
+                    <th className="py-2.5 px-2.5 w-64">Product / Standard Name *</th>
+                    <th className="py-2.5 px-2.5 w-32">Make / Brand</th>
+                    <th className="py-2.5 px-2.5 w-20">UOM *</th>
                     <th className="py-2.5 px-2.5 w-20">Qty *</th>
                     <th className="py-2.5 px-2.5 w-32">Unit Rate (₹) *</th>
+                    <th className="py-2.5 px-2.5 w-28 text-center">Disc</th>
                     <th className="py-2.5 px-2.5 w-32 text-right">Total Amount (₹)</th>
-                    <th className="py-2.5 px-2.5 min-w-[170px]">Remark</th>
+                    <th className="py-2.5 px-2.5 min-w-[160px]">Remark</th>
                     <th className="py-2.5 px-2.5 w-20 text-center">Actions</th>
                   </tr>
                 </thead>
@@ -1549,7 +1726,7 @@ export function Quotation({ initialCustomerId = '' }) {
                       </td>
 
                       {/* Product Name & Search (Strict single-line, fixed width) */}
-                      <td className="py-2 px-2.5 w-72 max-w-[288px]">
+                      <td className="py-2 px-2.5 w-64 max-w-[256px]">
                         <div className="w-full min-w-0">
                           <SearchableProductSelect
                             products={allDropdownProducts}
@@ -1564,7 +1741,7 @@ export function Quotation({ initialCustomerId = '' }) {
                       </td>
 
                       {/* Make / Brand */}
-                      <td className="py-2 px-2.5 w-36">
+                      <td className="py-2 px-2.5 w-32">
                         <input
                           type="text"
                           value={item.make}
@@ -1576,7 +1753,7 @@ export function Quotation({ initialCustomerId = '' }) {
                       </td>
 
                       {/* UOM */}
-                      <td className="py-2 px-2.5 w-24">
+                      <td className="py-2 px-2.5 w-20">
                         <div className="relative">
                           <input
                             type="text"
@@ -1632,15 +1809,48 @@ export function Quotation({ initialCustomerId = '' }) {
                         </div>
                       </td>
 
+                      {/* Line Item Discount */}
+                      <td className="py-2 px-2.5 w-28">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={item.discount_val !== undefined && item.discount_val !== null ? item.discount_val : ''}
+                            onChange={(e) => updateItemField(idx, 'discount_val', e.target.value)}
+                            disabled={isOrderConfirmed}
+                            placeholder="0"
+                            className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-mono font-bold rounded-lg px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                            title="Item discount value"
+                          />
+                          <button
+                            type="button"
+                            disabled={isOrderConfirmed}
+                            onClick={() => updateItemField(idx, 'discount_type', item.discount_type === 'fixed' ? 'percent' : 'fixed')}
+                            className="h-9 px-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all shrink-0 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
+                            title="Click to toggle between percentage (%) and flat amount (₹)"
+                          >
+                            {item.discount_type === 'fixed' ? '₹' : '%'}
+                          </button>
+                        </div>
+                      </td>
+
                       {/* Total Amount (₹) */}
                       <td className="py-2 px-2.5 w-32 text-right">
-                        <div className="h-9 flex items-center justify-end font-mono font-bold text-slate-900 text-xs">
-                          ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <div className="h-9 flex flex-col justify-center items-end">
+                          <div className="font-mono font-bold text-slate-900 text-xs">
+                            ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          {parseFloat(item.discount_val) > 0 && (
+                            <div className="text-[10px] text-emerald-600 font-mono font-medium" title="Discounted net price per unit">
+                              Net: ₹{computeItemDiscountedRate(item).toFixed(2)}
+                            </div>
+                          )}
                         </div>
                       </td>
 
                       {/* Remark */}
-                      <td className="py-2 px-2.5 min-w-[170px]">
+                      <td className="py-2 px-2.5 min-w-[160px]">
                         <input
                           type="text"
                           value={item.remark || ''}
@@ -1766,6 +1976,17 @@ export function Quotation({ initialCustomerId = '' }) {
                     placeholder="0"
                     className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
                   />
+                  {!isOrderConfirmed && parseFloat(discountValue) > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleApplyQuotationDiscountToAll}
+                      className="mt-1.5 w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-semibold transition-all cursor-pointer shadow-2xs"
+                      title="Distribute this quotation discount across all line items"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                      Apply Quotation Discount to All Items
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1884,27 +2105,39 @@ export function Quotation({ initialCustomerId = '' }) {
                     </button>
                   </div>
                 ) : (
-                  <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
                     <button
                       type="button"
                       onClick={handleSaveToSheets}
                       disabled={isSaving || isExporting}
-                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all disabled:opacity-50 cursor-pointer"
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer text-center"
+                      title="Save this quotation to database"
                     >
-                      {isSaving ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <Save className="w-4 h-4" />}
-                      {isSaving ? 'Saving to Google Sheet...' : 'Save Quotation to Google Sheet'}
+                      {isSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" /> : <Save className="w-3.5 h-3.5 shrink-0" />}
+                      <span className="truncate">{isSaving ? 'Saving...' : 'Save Quotation'}</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => handleInitiateConfirmOrder()}
                       disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
-                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/20 transition-all disabled:opacity-50 cursor-pointer"
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-emerald-950/20 transition-all disabled:opacity-50 cursor-pointer text-center"
+                      title="Confirm order & update customer catalog with discounted prices"
                     >
-                      {isConfirmingOrder ? <RefreshCw className="w-4 h-4 animate-spin text-white" /> : <ShoppingBag className="w-4 h-4" />}
-                      {isConfirmingOrder ? 'Updating Pricing in Sheet...' : 'Confirm Order & Update Customer Prices'}
+                      {isConfirmingOrder ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" /> : <ShoppingBag className="w-3.5 h-3.5 shrink-0" />}
+                      <span className="truncate">{isConfirmingOrder ? 'Confirming...' : 'Confirm Order'}</span>
                     </button>
-                  </>
+
+                    <button
+                      type="button"
+                      onClick={handleNewQuotation}
+                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 hover:border-slate-400 shadow-2xs transition-all cursor-pointer text-center"
+                      title="Start a fresh blank quotation"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                      <span className="truncate">New Quotation</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1993,8 +2226,9 @@ export function Quotation({ initialCustomerId = '' }) {
                       <th className="py-2.5 px-2 w-24">Make</th>
                       <th className="py-2.5 px-2 w-14 text-center">UOM</th>
                       <th className="py-2.5 px-2 w-14 text-center">Qty</th>
-                      <th className="py-2.5 px-3 w-24 text-right">Rate (₹)</th>
-                      <th className="py-2.5 px-3 w-24 text-right">Amount (₹)</th>
+                      <th className="py-2.5 px-3 w-24 text-right">Rate</th>
+                      <th className="py-2.5 px-2 w-16 text-center">Disc</th>
+                      <th className="py-2.5 px-3 w-24 text-right">Amount</th>
                       <th className="py-2.5 px-3 w-28">Remark</th>
                     </tr>
                   </thead>
@@ -2011,6 +2245,9 @@ export function Quotation({ initialCustomerId = '' }) {
                         <td className="py-2.5 px-3 text-right font-mono text-slate-900">
                           ₹{Number(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
+                        <td className="py-2.5 px-2 text-center font-mono text-slate-600 text-[11px]">
+                          {parseFloat(item.discount_val) > 0 ? `${item.discount_val}${item.discount_type === 'fixed' ? '₹' : '%'}` : '-'}
+                        </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
                           ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
@@ -2020,63 +2257,107 @@ export function Quotation({ initialCustomerId = '' }) {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="border-t-2 border-slate-800 text-xs">
+                    {/* Subtotal Row - exactly below Amount column */}
+                    <tr className="font-bold bg-slate-50/70 border-b border-slate-200">
+                      <td colSpan={7} className="py-2.5 px-3 text-right text-slate-700 font-bold uppercase text-[11px] tracking-wide">
+                        Subtotal:
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                        ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-2.5 px-3"></td>
+                    </tr>
+
+                    {/* Quotation Discount if applied */}
+                    {discountAmount > 0 && (
+                      <tr className="text-emerald-700 border-b border-slate-200">
+                        <td colSpan={7} className="py-2 px-3 text-right font-semibold text-[11px]">
+                          Discount ({discountType === 'percent' ? `${discountValue}%` : 'Flat'}):
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
+                          -₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2 px-3"></td>
+                      </tr>
+                    )}
+
+                    {/* Taxable Amount if discount was present */}
+                    {discountAmount > 0 && (
+                      <tr className="text-slate-700 border-b border-slate-200 font-semibold">
+                        <td colSpan={7} className="py-2 px-3 text-right text-[11px]">
+                          Taxable Value:
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-900">
+                          ₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2 px-3"></td>
+                      </tr>
+                    )}
+
+                    {/* Tax Details */}
+                    {taxDetails.rate > 0 && (
+                      <>
+                        {taxDetails.isSplit ? (
+                          <>
+                            <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                              <td colSpan={7} className="py-1.5 px-3 text-right">
+                                CGST (9%):
+                              </td>
+                              <td className="py-1.5 px-3 text-right font-mono">
+                                ₹{taxDetails.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1.5 px-3"></td>
+                            </tr>
+                            <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                              <td colSpan={7} className="py-1.5 px-3 text-right">
+                                SGST (9%):
+                              </td>
+                              <td className="py-1.5 px-3 text-right font-mono">
+                                ₹{taxDetails.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-1.5 px-3"></td>
+                            </tr>
+                          </>
+                        ) : (
+                          <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                            <td colSpan={7} className="py-1.5 px-3 text-right">
+                              {taxDetails.label}:
+                            </td>
+                            <td className="py-1.5 px-3 text-right font-mono">
+                              ₹{taxDetails.totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-1.5 px-3"></td>
+                          </tr>
+                        )}
+                      </>
+                    )}
+
+                    {/* Round off */}
+                    {Math.abs(roundOff) > 0.001 && (
+                      <tr className="text-slate-500 text-[11px] border-b border-slate-100">
+                        <td colSpan={7} className="py-1.5 px-3 text-right">
+                          Round Off:
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-mono">
+                          {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}
+                        </td>
+                        <td className="py-1.5 px-3"></td>
+                      </tr>
+                    )}
+
+                    {/* Grand Total */}
+                    <tr className="border-t-2 border-b-2 border-slate-900 bg-slate-100/90 text-slate-900 font-black">
+                      <td colSpan={7} className="py-3 px-3 text-right font-bold text-xs uppercase tracking-wider text-slate-900">
+                        GRAND TOTAL (INR):
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono text-indigo-700 font-extrabold text-sm">
+                        ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3"></td>
+                    </tr>
+                  </tfoot>
                 </table>
-              </div>
-
-              {/* Total Summary Breakdown */}
-              <div className="flex justify-end mb-6">
-                <div className="w-72 space-y-1.5 text-xs">
-                  <div className="flex justify-between py-1 border-t border-slate-200">
-                    <span className="text-slate-600">Subtotal:</span>
-                    <span className="font-mono font-bold text-slate-900">₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                  </div>
-
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between py-1 text-emerald-700">
-                      <span>Discount ({discountType === 'percent' ? `${discountValue}%` : 'Flat'}):</span>
-                      <span className="font-mono font-bold">-₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between py-1 border-t border-slate-200 text-slate-700 font-semibold">
-                    <span>Taxable Value:</span>
-                    <span className="font-mono text-slate-900">₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                  </div>
-
-                  {taxDetails.rate > 0 && (
-                    <>
-                      {taxDetails.isSplit ? (
-                        <>
-                          <div className="flex justify-between text-slate-600 text-[11px]">
-                            <span>CGST (9%):</span>
-                            <span className="font-mono">₹{taxDetails.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                          </div>
-                          <div className="flex justify-between text-slate-600 text-[11px]">
-                            <span>SGST (9%):</span>
-                            <span className="font-mono">₹{taxDetails.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex justify-between text-slate-600 text-[11px]">
-                          <span>{taxDetails.label}:</span>
-                          <span className="font-mono">₹{taxDetails.totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {Math.abs(roundOff) > 0.001 && (
-                    <div className="flex justify-between text-slate-500 text-[11px]">
-                      <span>Round Off:</span>
-                      <span className="font-mono">{roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}</span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between py-2 border-t-2 border-b-2 border-slate-900 text-sm font-extrabold text-slate-900 bg-slate-50 px-2">
-                    <span>GRAND TOTAL:</span>
-                    <span className="font-mono text-indigo-700">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </div>
               </div>
 
               {/* Amount In Words Box */}
@@ -2121,7 +2402,7 @@ export function Quotation({ initialCustomerId = '' }) {
                   Saved Quotations Catalog
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  View and manage all quotations saved to Google Sheets. Load any quotation to modify and re-save, or confirm the order to update customer pricing with automatic price history.
+                  View and manage all saved quotations. Load any quotation to modify and re-save, or confirm the order to update customer pricing with automatic price history.
                 </p>
               </div>
 
@@ -2130,7 +2411,7 @@ export function Quotation({ initialCustomerId = '' }) {
                   onClick={loadSavedQuotations}
                   disabled={isLoadingSavedQuotations}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
-                  title="Reload quotations from Google Sheets"
+                  title="Reload quotations list"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSavedQuotations ? 'animate-spin text-indigo-600' : ''}`} />
                   {isLoadingSavedQuotations ? 'Syncing...' : 'Refresh List'}
@@ -2222,7 +2503,7 @@ export function Quotation({ initialCustomerId = '' }) {
           {isLoadingSavedQuotations ? (
             <div className="bg-white border border-slate-200/80 rounded-2xl p-12 text-center shadow-xs">
               <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />
-              <div className="text-sm font-bold text-slate-800">Loading saved quotations from Google Sheets...</div>
+              <div className="text-sm font-bold text-slate-800">Loading saved quotations...</div>
               <p className="text-xs text-slate-500 mt-1">Fetching your quotation records and line items</p>
             </div>
           ) : filteredSavedQuotations.length === 0 ? (
@@ -2235,7 +2516,7 @@ export function Quotation({ initialCustomerId = '' }) {
               </div>
               <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
                 {savedQuotations.length === 0
-                  ? 'Build a quotation in the Edit & Configure tab and click "Save to Google Sheet" to store it permanently.'
+                  ? 'Build a quotation in the Edit & Configure tab and click "Save Quotation" to store it permanently.'
                   : 'Try clearing your search query or switching the status filter.'}
               </p>
               {savedQuotations.length === 0 && (
@@ -2435,10 +2716,10 @@ export function Quotation({ initialCustomerId = '' }) {
             <div className="p-3.5 bg-emerald-50/80 rounded-xl border border-emerald-200 text-xs text-emerald-900 space-y-1">
               <div className="font-bold flex items-center gap-1.5 text-emerald-800">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-                Automated Customer Price Update & Price History
+                Automated Customer Price Update (Discounted Price)
               </div>
               <p className="leading-relaxed text-emerald-950/80">
-                Confirming this order will permanently update customer pricing in your Google Sheet / catalog for each item below. Previous prices are safely moved to <strong>Previous Price</strong> and archived with date in <strong>Price History</strong>.
+                Confirming this order will permanently update customer pricing in the customer catalog with each item's <strong>discounted price</strong>. Previous prices are safely moved to <strong>Previous Price</strong> and archived with date in <strong>Price History</strong>.
               </p>
             </div>
 
@@ -2455,13 +2736,18 @@ export function Quotation({ initialCustomerId = '' }) {
 
               <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
                 {(confirmOrderModal.items || []).map((it, idx) => {
-                  const rateVal = Number(it.rate !== undefined ? it.rate : it.price) || 0;
+                  const effectivePriceToSet = computeItemDiscountedRate(it, confirmOrderModal);
+                  const originalRate = Number(it.rate !== undefined && it.rate !== '' ? it.rate : (it.price !== undefined ? it.price : 0)) || 0;
+                  const hasDiscount = effectivePriceToSet < originalRate || (parseFloat(it.discount_val) > 0);
+                  const discountDiff = Math.max(0, originalRate - effectivePriceToSet);
+                  const discountPct = originalRate > 0 ? ((discountDiff / originalRate) * 100).toFixed(1) : 0;
+
                   const existingRec = (customerPrices || []).find(cp =>
                     (cp.product_id && it.product_id && String(cp.product_id).toUpperCase() === String(it.product_id).toUpperCase()) ||
                     (cp.standard_name && it.product_name && String(cp.standard_name).toUpperCase() === String(it.product_name).toUpperCase())
                   );
                   const currentPrice = existingRec ? parseFloat(existingRec.price) : null;
-                  const isChanged = currentPrice !== null && !isNaN(currentPrice) && currentPrice !== rateVal;
+                  const isChanged = currentPrice !== null && !isNaN(currentPrice) && currentPrice !== effectivePriceToSet;
 
                   return (
                     <div key={idx} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/80">
@@ -2472,21 +2758,31 @@ export function Quotation({ initialCustomerId = '' }) {
                         <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
                           {it.product_id && <span className="font-mono">ID: {it.product_id}</span>}
                           <span>Qty: {it.qty || 1} {it.uom || 'Nos'}</span>
+                          {hasDiscount && (
+                            <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-semibold text-[10px]">
+                              {it.discount_val ? `Disc: ${it.discount_val}${it.discount_type === 'fixed' ? '₹' : '%'}` : `Disc: -${discountPct}% (₹${discountDiff.toFixed(2)})`}
+                            </span>
+                          )}
                         </div>
                       </div>
 
                       <div className="text-right shrink-0">
-                        <div className="font-mono font-bold text-emerald-700">
-                          ₹{rateVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        <div className="font-mono font-bold text-emerald-700 flex items-center justify-end gap-1.5">
+                          <span>₹{effectivePriceToSet.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          {hasDiscount && (
+                            <span className="text-[10px] text-slate-400 line-through font-normal">
+                              ₹{originalRate.toFixed(2)}
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
+                        <div className="text-[10px] mt-0.5">
                           {existingRec && !isNaN(currentPrice) ? (
                             isChanged ? (
                               <span className="text-amber-600 font-medium">
-                                Was: ₹{currentPrice.toFixed(2)} → History
+                                Current ₹{currentPrice.toFixed(2)} → Moves to Price History
                               </span>
                             ) : (
-                              <span className="text-slate-400">Current matches</span>
+                              <span className="text-slate-400">Matches current catalog price</span>
                             )
                           ) : (
                             <span className="text-indigo-600 font-medium">New catalog price</span>
@@ -2521,7 +2817,7 @@ export function Quotation({ initialCustomerId = '' }) {
                 ) : (
                   <CheckCircle2 className="w-3.5 h-3.5" />
                 )}
-                {isConfirmingOrder ? 'Updating Pricing in Sheet...' : 'Yes, Confirm Order & Update Pricing'}
+                {isConfirmingOrder ? 'Updating Pricing...' : 'Yes, Confirm Order & Update Pricing'}
               </button>
             </div>
           </div>
