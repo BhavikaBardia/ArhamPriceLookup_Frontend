@@ -1,17 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { api } from './api';
+import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Login } from './pages/Login';
 import { CustomerCatalog } from './pages/CustomerCatalog';
 import { Manage } from './pages/Manage';
 import { Quotation } from './pages/Quotation';
-import { Badge } from './components/ui/Badge';
+import { AdminSecurityModal } from './components/AdminSecurityModal';
+import { AdminLockScreen } from './components/AdminLockScreen';
 import { 
-  Sparkles, Server, Table, Menu, X, PackagePlus, Users, FileText
+  Sparkles, Table, Menu, X, PackagePlus, Users, FileText,
+  ShieldCheck, Lock, Settings, LogOut, User as UserIcon
 } from 'lucide-react';
 
-export default function App() {
+function AppContent() {
+  const { user, isAuthenticated, role, isAdmin, isSales, openSecurityModal, logout } = useAuth();
   const [currentPage, setCurrentPage] = useState('catalog'); // 'catalog', 'quotation', 'products', 'customers'
-  const [status, setStatus] = useState(null);
-  
+
   // Navigation prefill parameters
   const [prefillCustomer, setPrefillCustomer] = useState('');
   const [prefillProduct, setPrefillProduct] = useState('');
@@ -19,32 +22,16 @@ export default function App() {
   // Mobile navigation drawer toggle
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
-    checkStatus();
-  }, []);
-
-  const checkStatus = async () => {
-    try {
-      const data = await api.getHealth();
-      setStatus(data);
-    } catch (err) {
-      console.error('Failed to get status:', err);
-    }
-  };
-
-  const handleNavigateToManage = (customerId, productId) => {
-    setPrefillCustomer(customerId);
-    setPrefillProduct(productId);
-    setCurrentPage('pricing');
-  };
-
-  const isAppsScriptConnected = status?.mode === 'google_apps_script' || !!status?.is_cloud_connected || !!status?.script_url;
+  // If user is not authenticated, show the Login page
+  if (!isAuthenticated) {
+    return <Login />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       {/* Top Header Navigation Bar */}
-      <header className="sticky top-0 z-40 bg-white/90 border-b border-slate-200/80 backdrop-blur-xl shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[64px] py-2 flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-40 bg-white/95 border-b border-slate-200/80 backdrop-blur-xl shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[64px] py-2 flex items-center justify-between gap-3">
           
           {/* Logo & Brand */}
           <div className="flex items-center gap-2.5 cursor-pointer shrink-0" onClick={() => setCurrentPage('catalog')}>
@@ -95,6 +82,7 @@ export default function App() {
             >
               <PackagePlus className="w-3.5 h-3.5" />
               3. Manage Products
+              {!isAdmin && <Lock className="w-3 h-3 text-slate-400 ml-0.5" />}
             </button>
 
             <button
@@ -107,22 +95,43 @@ export default function App() {
             >
               <Users className="w-3.5 h-3.5" />
               4. Manage Customers
+              {!isAdmin && <Lock className="w-3 h-3 text-slate-400 ml-0.5" />}
             </button>
           </nav>
 
-          {/* Live Status Indicator */}
+          {/* Right Header: User Profile Pill & Logout */}
           <div className="flex items-center gap-2 shrink-0">
-            {isAppsScriptConnected ? (
-              <Badge variant="success" className="shadow-xs text-[10px] sm:text-xs py-1 px-2.5 select-none">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5" />
-                Live Cloud Sync
-              </Badge>
-            ) : (
-              <Badge variant="default" className="shadow-xs text-[10px] sm:text-xs py-1 px-2.5 select-none">
-                <Server className="w-3 h-3 mr-1" />
-                Local Engine
-              </Badge>
-            )}
+            {/* User Profile Pill & Settings */}
+            <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200/90 rounded-xl p-1 shadow-xs">
+              <button
+                type="button"
+                onClick={openSecurityModal}
+                className="flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs text-slate-800 bg-white shadow-xs hover:bg-slate-50 transition-colors cursor-pointer"
+                title="Account & Security Settings"
+              >
+                <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
+                  {user?.full_name ? user.full_name[0].toUpperCase() : 'U'}
+                </div>
+                <div className="text-left hidden sm:block">
+                  <div className="font-bold text-slate-800 text-[11px] leading-tight truncate max-w-[110px]">
+                    {user?.full_name || user?.username}
+                  </div>
+                  <div className="text-[9px] font-semibold text-indigo-600 uppercase tracking-wider">
+                    {role}
+                  </div>
+                </div>
+                <Settings className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600 ml-0.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
             {/* Mobile Hamburger Toggle Button */}
             <button
@@ -139,42 +148,52 @@ export default function App() {
           <div className="lg:hidden border-t border-slate-200 bg-white p-3 space-y-1 animate-in fade-in slide-in-from-top-2">
             <button
               onClick={() => { setCurrentPage('catalog'); setIsMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold ${
                 currentPage === 'catalog' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <Table className="w-4 h-4" />
-              1. Customer Price Catalog
+              <div className="flex items-center gap-2">
+                <Table className="w-4 h-4" />
+                1. Customer Price Catalog
+              </div>
             </button>
 
             <button
               onClick={() => { setCurrentPage('quotation'); setIsMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold ${
                 currentPage === 'quotation' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <FileText className="w-4 h-4 text-indigo-600" />
-              2. Create Quotation
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-indigo-600" />
+                2. Create Quotation
+              </div>
             </button>
 
             <button
               onClick={() => { setCurrentPage('products'); setIsMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold ${
                 currentPage === 'products' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <PackagePlus className="w-4 h-4" />
-              3. Manage Products
+              <div className="flex items-center gap-2">
+                <PackagePlus className="w-4 h-4" />
+                3. Manage Products
+              </div>
+              {!isAdmin && <Lock className="w-3.5 h-3.5 text-slate-400" />}
             </button>
 
             <button
               onClick={() => { setCurrentPage('customers'); setIsMobileMenuOpen(false); }}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold ${
                 currentPage === 'customers' ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
               }`}
             >
-              <Users className="w-4 h-4" />
-              4. Manage Customers
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                4. Manage Customers
+              </div>
+              {!isAdmin && <Lock className="w-3.5 h-3.5 text-slate-400" />}
             </button>
           </div>
         )}
@@ -192,11 +211,36 @@ export default function App() {
             onNavigateToCatalog={(cid) => { setPrefillCustomer(cid); setCurrentPage('catalog'); }}
           />
         ) : currentPage === 'products' ? (
-          <Manage mode="product" />
+          isAdmin ? (
+            <Manage mode="product" />
+          ) : (
+            <AdminLockScreen 
+              title="Product Management" 
+              onNavigateToCatalog={() => setCurrentPage('catalog')} 
+            />
+          )
         ) : (
-          <Manage mode="customer" prefillCustomer={prefillCustomer} prefillProduct={prefillProduct} />
+          isAdmin ? (
+            <Manage mode="customer" prefillCustomer={prefillCustomer} prefillProduct={prefillProduct} />
+          ) : (
+            <AdminLockScreen 
+              title="Customer Management" 
+              onNavigateToCatalog={() => setCurrentPage('catalog')} 
+            />
+          )
         )}
       </main>
+
+      {/* Security & Account Settings Modal */}
+      <AdminSecurityModal />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

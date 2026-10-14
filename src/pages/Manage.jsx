@@ -4,9 +4,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs'
 import { SearchableCustomerSelect, SearchableProductSelect } from '../components/ui/SearchableSelect';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/Dialog';
 import { PriceHistoryDrawer } from '../components/PriceHistoryDrawer';
-import { 
-  PackagePlus, DollarSign, CheckCircle2, AlertCircle, RefreshCw, 
-  Tag, User, Table, Database, Sparkles, Building2, History, Calendar, 
+import {
+  PackagePlus, DollarSign, CheckCircle2, AlertCircle, RefreshCw,
+  Tag, User, Table, Database, Sparkles, Building2, History, Calendar,
   TrendingUp, TrendingDown, Info, Pencil, Trash2, Search, Filter, Layers,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, UserPlus, Users, FileText
 } from 'lucide-react';
@@ -21,7 +21,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
       setActiveTab(initialTab === 'product' ? 'pricing' : initialTab);
     }
   }, [mode, initialTab]);
-  
+
   // Data for selectors
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -260,7 +260,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
       // Auto-assign new unique product ID and customer ID
       setProdId(generateUniqueProdId(safeP));
       setCustId(generateUniqueCustId(safeC));
-      
+
       if (safeC.length > 0 && !priceCustomerId) setPriceCustomerId(safeC[0].customer_id);
       if (safeP.length > 0 && !priceProductId) setPriceProductId(safeP[0].product_id);
     } catch (err) {
@@ -337,9 +337,9 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
 
     if (duplicateExact) {
       const makeMsg = prodMake.trim() ? ` with Make '${prodMake.trim()}'` : '';
-      setProdMessage({ 
-        type: 'error', 
-        text: `Product '${prodName}'${makeMsg} already exists in catalog [${duplicateExact.product_id}]. Standard Product Name + Make must be unique.` 
+      setProdMessage({
+        type: 'error',
+        text: `Product '${prodName}'${makeMsg} already exists in catalog [${duplicateExact.product_id}]. Standard Product Name + Make must be unique.`
       });
       return;
     }
@@ -407,9 +407,9 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
 
     if (duplicate) {
       const makeMsg = editMake.trim() ? ` with Make '${editMake.trim()}'` : '';
-      setEditMessage({ 
-        type: 'error', 
-        text: `Product '${editName}'${makeMsg} already exists in catalog [${duplicate.product_id}]. Standard Product Name + Make must be unique.` 
+      setEditMessage({
+        type: 'error',
+        text: `Product '${editName}'${makeMsg} already exists in catalog [${duplicate.product_id}]. Standard Product Name + Make must be unique.`
       });
       return;
     }
@@ -492,9 +492,9 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
     });
 
     if (duplicateExact) {
-      setCustMessage({ 
-        type: 'error', 
-        text: `Customer '${custName}' already exists in database [${duplicateExact.customer_id}].` 
+      setCustMessage({
+        type: 'error',
+        text: `Customer '${custName}' already exists in database [${duplicateExact.customer_id}].`
       });
       return;
     }
@@ -557,9 +557,9 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
     });
 
     if (duplicate) {
-      setEditCustMessage({ 
-        type: 'error', 
-        text: `Customer '${editCustName}' already exists in database [${duplicate.customer_id}].` 
+      setEditCustMessage({
+        type: 'error',
+        text: `Customer '${editCustName}' already exists in database [${duplicate.customer_id}].`
       });
       return;
     }
@@ -653,9 +653,9 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
         return;
       }
 
-      setPriceMessage({ 
-        type: 'success', 
-        text: res.message || 'Customer price saved successfully!' 
+      setPriceMessage({
+        type: 'success',
+        text: res.message || 'Customer price saved successfully!'
       });
       setPriceAmount('');
       loadAllData();
@@ -701,7 +701,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                 : 'Set customer specific pricing & manage customer records.'}
             </p>
           </div>
-          
+
           <button
             onClick={loadAllData}
             className="self-start md:self-auto flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:text-slate-900 hover:bg-slate-200/80 border border-slate-200 transition-all cursor-pointer"
@@ -748,11 +748,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </div>
 
             {priceMessage && (
-              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${
-                priceMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${priceMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {priceMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {priceMessage.text}
               </div>
@@ -920,11 +919,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </div>
 
             {prodMessage && (
-              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${
-                prodMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${prodMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {prodMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {prodMessage.text}
               </div>
@@ -1007,7 +1005,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                 <button
                   type="submit"
                   disabled={isSubmittingProd}
-                  className="h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl px-6 flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+                  className="w-full sm:w-auto h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl px-6 flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmittingProd ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1023,8 +1021,8 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           </div>
 
           {/* Full Products Catalog Table with CRUD Actions */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Table className="w-5 h-5 text-indigo-600" />
@@ -1034,30 +1032,27 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
               </div>
 
               {/* Search & Make Filter Pills */}
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
                 {/* Make Filter Pills */}
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto overflow-x-auto">
                   <button
                     onClick={() => setProdMakeFilter('all')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      prodMakeFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${prodMakeFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     All ({products.length})
                   </button>
                   <button
                     onClick={() => setProdMakeFilter('with_make')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      prodMakeFilter === 'with_make' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${prodMakeFilter === 'with_make' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     With Make ({productsWithMakeCount})
                   </button>
                   <button
                     onClick={() => setProdMakeFilter('without_make')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      prodMakeFilter === 'without_make' ? 'bg-white text-slate-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${prodMakeFilter === 'without_make' ? 'bg-white text-slate-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     General ({products.length - productsWithMakeCount})
                   </button>
@@ -1091,67 +1086,124 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                 <p className="text-sm font-medium text-slate-500">No products found matching "{prodTableQuery}"</p>
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 bg-slate-50 uppercase tracking-wider font-semibold">
-                      <th className="py-3.5 px-4 w-12 text-center">#</th>
-                      <th className="py-3.5 px-4 w-36">Product ID</th>
-                      <th className="py-3.5 px-4">Standard Product Name</th>
-                      <th className="py-3.5 px-4 w-44">Make / Brand</th>
-                      <th className="py-3.5 px-4 w-28 text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {paginatedCatalogProducts.map((p, idx) => (
-                      <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">
-                          {(prodCurrentPage - 1) * PROD_PER_PAGE + idx + 1}
-                        </td>
-                        <td className="py-3 px-4 font-mono font-bold text-indigo-700">
-                          {p.product_id}
-                        </td>
-                        <td className="py-3 px-4 font-bold text-slate-900 text-xs sm:text-sm">
-                          {p.standard_name}
-                        </td>
-                        <td className="py-3 px-4">
-                          {p.make ? (
-                            <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 inline-block">
-                              {p.make}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">-</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => openEditModal(p)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                              title="Edit Product Name & Make"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => openDeleteModal(p)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Delete Product"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
+              <>
+                {/* MOBILE CARD VIEW (sm:hidden) - Completely eliminates horizontal scrolling */}
+                <div className="sm:hidden divide-y divide-slate-100 bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-2xs">
+                  {paginatedCatalogProducts.map((p, idx) => (
+                    <div key={p.product_id} className="p-3.5 space-y-2.5 hover:bg-slate-50/60 transition-colors">
+                      {/* Top row: # index, Product ID & Action Buttons */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 font-mono text-xs">
+                          <span className="text-slate-400 font-medium">
+                            #{(prodCurrentPage - 1) * PROD_PER_PAGE + idx + 1}
+                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span className="font-bold text-indigo-700">
+                            {p.product_id}
+                          </span>
+                        </div>
+
+                        {/* Action Buttons (Edit & Delete - Icons only with color) */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => openEditModal(p)}
+                            className="p-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition-colors cursor-pointer shadow-2xs"
+                            title="Edit Product Name & Make"
+                            aria-label="Edit Product"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-indigo-600" />
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(p)}
+                            className="p-1.5 rounded-lg text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 transition-colors cursor-pointer shadow-2xs"
+                            title="Delete Product"
+                            aria-label="Delete Product"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Standard Product Name */}
+                      <div className="font-bold text-slate-900 text-sm break-words leading-snug">
+                        {p.standard_name}
+                      </div>
+
+                      {/* Make / Brand badge only */}
+                      {p.make && (
+                        <div className="pt-0.5">
+                          <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 inline-block">
+                            {p.make}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* DESKTOP TABLE VIEW (hidden sm:block) */}
+                <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200/80">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 bg-slate-50 uppercase tracking-wider font-semibold">
+                        <th className="py-3.5 px-4 w-12 text-center">#</th>
+                        <th className="py-3.5 px-4 w-36">Product ID</th>
+                        <th className="py-3.5 px-4">Standard Product Name</th>
+                        <th className="py-3.5 px-4 w-44">Make / Brand</th>
+                        <th className="py-3.5 px-4 w-28 text-center">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {paginatedCatalogProducts.map((p, idx) => (
+                        <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">
+                            {(prodCurrentPage - 1) * PROD_PER_PAGE + idx + 1}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-indigo-700">
+                            {p.product_id}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900 text-xs sm:text-sm">
+                            {p.standard_name}
+                          </td>
+                          <td className="py-3 px-4">
+                            {p.make ? (
+                              <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 inline-block">
+                                {p.make}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[11px]">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => openEditModal(p)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                                title="Edit Product Name & Make"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => openDeleteModal(p)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Delete Product"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {/* Pagination Bar */}
             {filteredCatalogProducts.length > 0 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-100 text-xs text-slate-500 font-medium">
-                <div>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs text-slate-500 font-medium">
+                <div className="text-center sm:text-left">
                   Showing <span className="font-bold text-slate-900">{Math.min((prodCurrentPage - 1) * PROD_PER_PAGE + 1, filteredCatalogProducts.length)}</span> to{' '}
                   <span className="font-bold text-slate-900">{Math.min(prodCurrentPage * PROD_PER_PAGE, filteredCatalogProducts.length)}</span> of{' '}
                   <span className="font-bold text-slate-900">{filteredCatalogProducts.length}</span> products
@@ -1176,7 +1228,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                       <span>Prev</span>
                     </button>
 
-                    <span className="px-3 py-1 bg-slate-100 rounded-lg font-bold text-slate-800 border border-slate-200">
+                    <span className="px-3 py-1 bg-slate-100 rounded-lg font-bold text-slate-800 border border-slate-200 whitespace-nowrap">
                       Page {prodCurrentPage} of {totalProdPages}
                     </span>
 
@@ -1248,11 +1300,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </div>
 
             {custMessage && (
-              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${
-                custMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-4 rounded-xl text-sm flex items-center gap-2 border ${custMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {custMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {custMessage.text}
               </div>
@@ -1301,7 +1352,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                 <button
                   type="submit"
                   disabled={isSubmittingCust}
-                  className="h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl px-6 flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+                  className="w-full sm:w-auto h-11 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl px-6 flex items-center justify-center gap-2 shadow-xs transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmittingCust ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1317,8 +1368,8 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           </div>
 
           {/* Full Customers Catalog Table with CRUD Actions */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Table className="w-5 h-5 text-indigo-600" />
@@ -1328,30 +1379,27 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
               </div>
 
               {/* Search & GSTIN Filter Pills */}
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
                 {/* GSTIN Filter Pills */}
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto overflow-x-auto">
                   <button
                     onClick={() => setCustGstinFilter('all')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      custGstinFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${custGstinFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     All ({customers.length})
                   </button>
                   <button
                     onClick={() => setCustGstinFilter('with_gstin')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      custGstinFilter === 'with_gstin' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${custGstinFilter === 'with_gstin' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     With GSTIN ({customersWithGstinCount})
                   </button>
                   <button
                     onClick={() => setCustGstinFilter('without_gstin')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      custGstinFilter === 'without_gstin' ? 'bg-white text-slate-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${custGstinFilter === 'without_gstin' ? 'bg-white text-slate-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     No GSTIN ({customers.length - customersWithGstinCount})
                   </button>
@@ -1385,67 +1433,127 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                 <p className="text-sm font-medium text-slate-500">No customers found matching "{custTableQuery}"</p>
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500 bg-slate-50 uppercase tracking-wider font-semibold">
-                      <th className="py-3.5 px-4 w-12 text-center">#</th>
-                      <th className="py-3.5 px-4 w-36">Customer ID</th>
-                      <th className="py-3.5 px-4">Customer Name</th>
-                      <th className="py-3.5 px-4 w-52">GSTIN</th>
-                      <th className="py-3.5 px-4 w-28 text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {paginatedCatalogCustomers.map((c, idx) => (
-                      <tr key={c.customer_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">
-                          {(custCurrentPage - 1) * CUST_PER_PAGE + idx + 1}
-                        </td>
-                        <td className="py-3 px-4 font-mono font-bold text-indigo-700">
-                          {c.customer_id}
-                        </td>
-                        <td className="py-3 px-4 font-bold text-slate-900 text-xs sm:text-sm">
-                          {c.customer_name}
-                        </td>
-                        <td className="py-3 px-4">
-                          {c.gstin ? (
-                            <span className="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 inline-block">
-                              {c.gstin}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-[11px]">-</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => openEditCustomerModal(c)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
-                              title="Edit Customer Details"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => openDeleteCustomerModal(c)}
-                              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Delete Customer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
+              <>
+                {/* MOBILE CARD VIEW (sm:hidden) - Completely eliminates horizontal scrolling */}
+                <div className="sm:hidden divide-y divide-slate-100 bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-2xs">
+                  {paginatedCatalogCustomers.map((c, idx) => (
+                    <div key={c.customer_id} className="p-3.5 space-y-2.5 hover:bg-slate-50/60 transition-colors">
+                      {/* Top row: # index, Customer ID & Actions */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 font-mono text-xs">
+                          <span className="text-slate-400 font-medium">
+                            #{(custCurrentPage - 1) * CUST_PER_PAGE + idx + 1}
+                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span className="font-bold text-indigo-700">
+                            {c.customer_id}
+                          </span>
+                        </div>
+
+                        {/* Actions (Edit & Delete - Icons only with color) */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => openEditCustomerModal(c)}
+                            className="p-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 transition-colors cursor-pointer shadow-2xs"
+                            title="Edit Customer Details"
+                            aria-label="Edit Customer"
+                          >
+                            <Pencil className="w-3.5 h-3.5 text-indigo-600" />
+                          </button>
+                          <button
+                            onClick={() => openDeleteCustomerModal(c)}
+                            className="p-1.5 rounded-lg text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 transition-colors cursor-pointer shadow-2xs"
+                            title="Delete Customer"
+                            aria-label="Delete Customer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Customer Name */}
+                      <div className="font-bold text-slate-900 text-sm break-words leading-snug">
+                        {c.customer_name}
+                      </div>
+
+                      {/* GSTIN */}
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        <span className="text-[11px] font-medium text-slate-500">GSTIN:</span>
+                        {c.gstin ? (
+                          <span className="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                            {c.gstin}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 italic">No GSTIN registered</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* DESKTOP TABLE VIEW (hidden sm:block) */}
+                <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200/80">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 bg-slate-50 uppercase tracking-wider font-semibold">
+                        <th className="py-3.5 px-4 w-12 text-center">#</th>
+                        <th className="py-3.5 px-4 w-36">Customer ID</th>
+                        <th className="py-3.5 px-4">Customer Name</th>
+                        <th className="py-3.5 px-4 w-52">GSTIN</th>
+                        <th className="py-3.5 px-4 w-28 text-center">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {paginatedCatalogCustomers.map((c, idx) => (
+                        <tr key={c.customer_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 text-center font-mono text-slate-400 text-[11px]">
+                            {(custCurrentPage - 1) * CUST_PER_PAGE + idx + 1}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-indigo-700">
+                            {c.customer_id}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-900 text-xs sm:text-sm">
+                            {c.customer_name}
+                          </td>
+                          <td className="py-3 px-4">
+                            {c.gstin ? (
+                              <span className="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 inline-block">
+                                {c.gstin}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[11px]">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => openEditCustomerModal(c)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                                title="Edit Customer Details"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => openDeleteCustomerModal(c)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Delete Customer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {/* Pagination Bar */}
             {filteredCatalogCustomers.length > 0 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-100 text-xs text-slate-500 font-medium">
-                <div>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100 text-xs text-slate-500 font-medium">
+                <div className="text-center sm:text-left">
                   Showing <span className="font-bold text-slate-900">{Math.min((custCurrentPage - 1) * CUST_PER_PAGE + 1, filteredCatalogCustomers.length)}</span> to{' '}
                   <span className="font-bold text-slate-900">{Math.min(custCurrentPage * CUST_PER_PAGE, filteredCatalogCustomers.length)}</span> of{' '}
                   <span className="font-bold text-slate-900">{filteredCatalogCustomers.length}</span> customers
@@ -1470,7 +1578,7 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
                       <span>Prev</span>
                     </button>
 
-                    <span className="px-3 py-1 bg-slate-100 rounded-lg font-bold text-slate-800 border border-slate-200">
+                    <span className="px-3 py-1 bg-slate-100 rounded-lg font-bold text-slate-800 border border-slate-200 whitespace-nowrap">
                       Page {custCurrentPage} of {totalCustPages}
                     </span>
 
@@ -1513,11 +1621,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </DialogHeader>
 
             {editMessage && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                editMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${editMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {editMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {editMessage.text}
               </div>
@@ -1593,11 +1700,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </DialogHeader>
 
             {deleteMessage && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                deleteMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${deleteMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {deleteMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {deleteMessage.text}
               </div>
@@ -1665,11 +1771,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </DialogHeader>
 
             {editCustMessage && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                editCustMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${editCustMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {editCustMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {editCustMessage.text}
               </div>
@@ -1745,11 +1850,10 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
             </DialogHeader>
 
             {deleteCustMessage && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                deleteCustMessage.type === 'success' 
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${deleteCustMessage.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                   : 'bg-rose-50 border-rose-200 text-rose-800'
-              }`}>
+                }`}>
                 {deleteCustMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                 {deleteCustMessage.text}
               </div>

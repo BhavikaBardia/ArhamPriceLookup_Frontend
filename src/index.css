@@ -81,3 +81,24 @@ code, pre {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.7);
 }
+
+/* Print Styles for Quotation Letterhead */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #quotation-letterhead-paper, #quotation-letterhead-paper * {
+    visibility: visible !important;
+  }
+  #quotation-letterhead-paper {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

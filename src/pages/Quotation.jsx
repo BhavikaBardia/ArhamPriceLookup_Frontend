@@ -10,7 +10,8 @@ import {
   Sparkles, User, Tag, Calendar, Hash, Percent, DollarSign,
   CheckCircle2, AlertCircle, RefreshCw, Eye, Edit3, Image, FileSpreadsheet,
   Building2, Phone, Mail, MapPin, Copy, Layers, Save,
-  ShoppingBag, Check, Search, History, Clock, ArrowRight, CheckCircle
+  ShoppingBag, Check, Search, History, Clock, ArrowRight, CheckCircle, ChevronDown,
+  Truck, Globe
 } from 'lucide-react';
 
 // Common Indian UOMs (Units of Measure)
@@ -74,7 +75,7 @@ function formatDateOnly(val) {
   return s;
 }
 
-const DEFAULT_TERMS = '1. Prices are valid for 30 days from the quotation date.\n2. Payment Terms: 100% advance or as agreed.\n3. Delivery: Ex-stock or within 7-10 working days upon confirmed P.O.\n4. GST will be charged extra as applicable.';
+const DEFAULT_TERMS = '1. Prices are valid for days as given in the quotation.\n2. Payment Terms: 100% advance or as agreed.\n3. Delivery: Ex-stock or within 7-10 working days upon confirmed P.O.\n4. GST will be charged extra as applicable.';
 
 // Helper: Compute effective unit rate after item discount & quotation discount
 function computeItemDiscountedRate(item, quotationContext = null) {
@@ -196,10 +197,11 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     }
   ]);
 
-  // Tax & Discount Settings
+  // Tax, Discount & Freight Settings
   const [taxType, setTaxType] = useState('cgst_sgst_18'); // 'cgst_sgst_18', 'igst_18', 'gst_12', 'gst_5', 'exempt'
   const [discountType, setDiscountType] = useState('percent'); // 'percent' or 'flat'
   const [discountValue, setDiscountValue] = useState(0);
+  const [freightCharges, setFreightCharges] = useState(0);
 
   // Terms & Notes
   const [terms, setTerms] = useState(DEFAULT_TERMS);
@@ -221,6 +223,31 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   const [currentOrderStatus, setCurrentOrderStatus] = useState(null);
   const [currentConfirmedAt, setCurrentConfirmedAt] = useState(null);
   const isOrderConfirmed = currentOrderStatus === 'CONFIRMED';
+ 
+  // Mobile Export Dropdown States
+  const [mobileExportOpen, setMobileExportOpen] = useState(false);
+  const [bottomExportOpen, setBottomExportOpen] = useState(false);
+  const exportDropdownRef = useRef(null);
+  const bottomExportDropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
+        setMobileExportOpen(false);
+      }
+      if (bottomExportDropdownRef.current && !bottomExportDropdownRef.current.contains(event.target)) {
+        setBottomExportOpen(false);
+      }
+    }
+    if (mobileExportOpen || bottomExportOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [mobileExportOpen, bottomExportOpen]);
 
   // Start a fresh, unique quotation (clears builder & generates new unique Quotation No)
   const handleNewQuotation = () => {
@@ -249,6 +276,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     ]);
     setDiscountType('percent');
     setDiscountValue(0);
+    setFreightCharges(0);
     setTaxType('cgst_sgst_18');
     setTerms(DEFAULT_TERMS);
     setCurrentOrderStatus(null);
@@ -264,6 +292,78 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   };
 
   const previewPaperRef = useRef(null);
+  const previewContainerRef = useRef(null);
+  const [previewZoomMode, setPreviewZoomMode] = useState('fit'); // 'fit' or '100'
+  const [previewScale, setPreviewScale] = useState(1);
+  const [paperHeight, setPaperHeight] = useState(1120);
+
+  // Responsive auto-scaling for mobile preview with fallback and resize listener
+  useEffect(() => {
+    const computeScale = () => {
+      let containerW = previewContainerRef.current?.clientWidth || 0;
+      if (containerW <= 50 && typeof window !== 'undefined') {
+        containerW = window.innerWidth;
+      }
+      if (containerW > 0 && containerW < 830) {
+        // Fit 794px letterhead comfortably within viewport width with padding
+        const padding = containerW < 500 ? 20 : 36;
+        const availableWidth = Math.max(260, containerW - padding);
+        const scale = Math.min(1, Math.max(0.28, availableWidth / 794));
+        setPreviewScale(scale);
+      } else if (containerW >= 830) {
+        setPreviewScale(1);
+      }
+    };
+
+    computeScale();
+    const timer = setTimeout(computeScale, 60);
+
+    window.addEventListener('resize', computeScale);
+    window.addEventListener('orientationchange', computeScale);
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined' && previewContainerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        computeScale();
+      });
+      resizeObserver.observe(previewContainerRef.current);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', computeScale);
+      window.removeEventListener('orientationchange', computeScale);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, [activeTab, previewZoomMode]);
+
+  // Track dynamic letterhead paper height to accurately adjust scaled container height
+  useEffect(() => {
+    const updatePaperHeight = () => {
+      if (previewPaperRef.current) {
+        const h = previewPaperRef.current.scrollHeight || previewPaperRef.current.offsetHeight || 1120;
+        if (h > 150) {
+          setPaperHeight(h);
+        }
+      }
+    };
+
+    updatePaperHeight();
+    const timer = setTimeout(updatePaperHeight, 100);
+
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined' && previewPaperRef.current) {
+      ro = new ResizeObserver(() => {
+        updatePaperHeight();
+      });
+      ro.observe(previewPaperRef.current);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      if (ro) ro.disconnect();
+    };
+  }, [activeTab, items, discountValue, discountType, freightCharges, terms, previewZoomMode]);
 
   const normalizeCustomer = (c) => {
     if (!c || typeof c !== 'object') {
@@ -716,7 +816,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     return { rate, label, isSplit, totalTax, cgst, sgst, igst };
   }, [taxType, taxableAmount]);
 
-  const rawGrandTotal = taxableAmount + taxDetails.totalTax;
+  const rawGrandTotal = taxableAmount + taxDetails.totalTax + (parseFloat(freightCharges) || 0);
   const roundOff = Math.round(rawGrandTotal) - rawGrandTotal;
   const grandTotal = Math.round(rawGrandTotal);
   const amountInWords = useMemo(() => numberToIndianWords(grandTotal), [grandTotal]);
@@ -734,7 +834,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         ['ARHAM ENGG CO.'],
         ['Distributors & Suppliers of Industrial & Electrical Items'],
         ['OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI\'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.'],
-        ['GSTIN: 33ADPPB7680M1Z3 | Email: ravibardia@hotmail.com'],
+        ['GSTIN: 33ADPPB7680M1Z3 | Email: ravibardia@hotmail.com | Website: https://arhamenggco.in/'],
         ['Commercial Product Price Quotation'],
         [''],
         ['Quotation No:', quotationNo, '', 'Date:', quotationDate],
@@ -760,9 +860,10 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         }),
         [''],
         ['', '', '', '', '', 'Subtotal (₹):', subtotal],
-        ['', '', '', '', '', `Discount (${discountType === 'percent' ? discountValue + '%' : 'Flat ₹'}):`, discountAmount],
-        ['', '', '', '', '', 'Taxable Value (₹):', taxableAmount],
-        ['', '', '', '', '', taxDetails.label + ':', taxDetails.totalTax],
+        ...(discountAmount > 0 ? [['', '', '', '', '', `Discount (${discountType === 'percent' ? discountValue + '%' : 'Flat ₹'}):`, discountAmount]] : []),
+        ...(discountAmount > 0 ? [['', '', '', '', '', 'Taxable Value (₹):', taxableAmount]] : []),
+        ...(taxDetails.rate > 0 ? [['', '', '', '', '', taxDetails.label + ':', taxDetails.totalTax]] : []),
+        ...(parseFloat(freightCharges) > 0 ? [['', '', '', '', '', 'Freight Charges (₹):', parseFloat(freightCharges) || 0]] : []),
         ['', '', '', '', '', 'Round Off (₹):', roundOff],
         ['', '', '', '', '', 'Grand Total (₹):', grandTotal],
         [''],
@@ -798,35 +899,80 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     }
   };
 
+  // Staging capture helper for guaranteed pristine standard A4 PDF and Image exports
+  // Ensures unscaled, full-width desktop layout regardless of mobile screen or preview zoom
+  const captureStagedCanvas = async (scale = 2) => {
+    let targetEl = document.getElementById('quotation-letterhead-paper');
+    if (!targetEl || activeTab === 'builder') {
+      setActiveTab('preview');
+      await new Promise(resolve => setTimeout(resolve, 350));
+      targetEl = document.getElementById('quotation-letterhead-paper');
+    }
+
+    if (!targetEl) {
+      throw new Error('Quotation preview document could not be rendered');
+    }
+
+    if (document.fonts) {
+      await document.fonts.ready;
+    }
+
+    // Fixed desktop A4 staging container
+    // Placed at z-index 99998 behind the export progress modal (z-index 99999)
+    const stagingContainer = document.createElement('div');
+    stagingContainer.id = 'quotation-staging-export-container';
+    stagingContainer.style.position = 'fixed';
+    stagingContainer.style.top = '0';
+    stagingContainer.style.left = '0';
+    stagingContainer.style.width = '794px';
+    stagingContainer.style.minWidth = '794px';
+    stagingContainer.style.maxWidth = '794px';
+    stagingContainer.style.zIndex = '99998';
+    stagingContainer.style.backgroundColor = '#ffffff';
+    stagingContainer.style.pointerEvents = 'none';
+
+    // Deep clone target element
+    const clone = targetEl.cloneNode(true);
+    clone.id = 'quotation-letterhead-paper-export-clone';
+    clone.style.width = '794px';
+    clone.style.minWidth = '794px';
+    clone.style.maxWidth = '794px';
+    clone.style.transform = 'none';
+    clone.style.boxShadow = 'none';
+    clone.style.border = 'none';
+    clone.style.margin = '0';
+    clone.style.padding = '40px';
+    clone.style.backgroundColor = '#ffffff';
+
+    stagingContainer.appendChild(clone);
+    document.body.appendChild(stagingContainer);
+
+    try {
+      const canvas = await html2canvas(clone, {
+        scale: scale,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        windowWidth: 1200, // Forces standard desktop media queries
+        scrollX: 0,
+        scrollY: 0,
+        logging: false
+      });
+      return canvas;
+    } finally {
+      if (document.body.contains(stagingContainer)) {
+        document.body.removeChild(stagingContainer);
+      }
+    }
+  };
+
   // Export to Image (.png)
   const handleExportImage = async () => {
     try {
       setIsExporting(true);
-      setExportMessage({ type: 'info', text: 'Rendering high-resolution image...' });
+      setExportMessage({ type: 'info', text: 'Rendering high-resolution A4 image...' });
 
-      // If currently on builder tab, switch to preview so the document is mounted
-      let targetEl = document.getElementById('quotation-letterhead-paper');
-      if (!targetEl || activeTab === 'builder') {
-        setActiveTab('preview');
-        await new Promise(resolve => setTimeout(resolve, 350));
-        targetEl = document.getElementById('quotation-letterhead-paper');
-      }
-
-      if (!targetEl) {
-        throw new Error('Quotation paper view not found');
-      }
-
-      if (document.fonts) {
-        await document.fonts.ready;
-      }
-
-      const canvas = await html2canvas(targetEl, {
-        scale: 2.5,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      });
-
+      const canvas = await captureStagedCanvas(2.5);
       const imgData = canvas.toDataURL('image/png');
       const custName = selectedCustomer?.customer_name || 'Customer';
       const a = document.createElement('a');
@@ -848,31 +994,9 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   const handleExportPdf = async () => {
     try {
       setIsExporting(true);
-      setExportMessage({ type: 'info', text: 'Generating PDF document...' });
+      setExportMessage({ type: 'info', text: 'Generating standard A4 PDF document...' });
 
-      // If currently on builder tab, switch to preview tab so document is mounted and laid out
-      let targetEl = document.getElementById('quotation-letterhead-paper');
-      if (!targetEl || activeTab === 'builder') {
-        setActiveTab('preview');
-        await new Promise(resolve => setTimeout(resolve, 350));
-        targetEl = document.getElementById('quotation-letterhead-paper');
-      }
-
-      if (!targetEl) {
-        throw new Error('Quotation preview document could not be rendered');
-      }
-
-      if (document.fonts) {
-        await document.fonts.ready;
-      }
-
-      const canvas = await html2canvas(targetEl, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false
-      });
-
+      const canvas = await captureStagedCanvas(2);
       const imgData = canvas.toDataURL('image/png');
       const PDFConstructor = typeof jsPDF === 'function' ? jsPDF : (jsPDF?.jsPDF || window.jspdf?.jsPDF);
       if (!PDFConstructor) {
@@ -880,26 +1004,50 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       }
 
       const pdf = new PDFConstructor('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const pdfWidth = pdf.internal.pageSize.getWidth(); // 210 mm
+      const pdfHeight = pdf.internal.pageSize.getHeight(); // 297 mm
       const imgHeight = (canvas.height * pdfWidth) / canvas.width;
 
-      if (imgHeight <= pdfHeight) {
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+      if (imgHeight <= pdfHeight + 3) {
+        // Fits cleanly on 1 standard A4 page without accidental blank page
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, Math.min(imgHeight, pdfHeight), undefined, 'FAST');
       } else {
         // Multi-page PDF handling
         let heightLeft = imgHeight;
         let position = 0;
 
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
         heightLeft -= pdfHeight;
 
-        while (heightLeft > 0) {
+        while (heightLeft > 3) {
           position = position - pdfHeight;
           pdf.addPage();
-          pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+          pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
           heightLeft -= pdfHeight;
         }
+      }
+
+      // Add clickable hyperlink annotation for website URL: https://arhamenggco.in/
+      try {
+        const paperEl = document.getElementById('quotation-letterhead-paper');
+        const linkEl = document.getElementById('letterhead-website-link');
+        if (paperEl && linkEl && typeof pdf.link === 'function') {
+          const paperRect = paperEl.getBoundingClientRect();
+          const linkRect = linkEl.getBoundingClientRect();
+          if (paperRect.width > 0 && paperRect.height > 0) {
+            const scaleX = pdfWidth / paperRect.width;
+            const scaleY = ((canvas.height * pdfWidth) / canvas.width) / paperRect.height;
+            const linkX = (linkRect.left - paperRect.left) * scaleX;
+            const linkY = (linkRect.top - paperRect.top) * scaleY;
+            const linkW = linkRect.width * scaleX;
+            const linkH = linkRect.height * scaleY;
+            // Set current page to 1 for header link
+            pdf.setPage(1);
+            pdf.link(linkX, linkY, linkW, linkH, { url: 'https://arhamenggco.in/' });
+          }
+        }
+      } catch (linkErr) {
+        console.warn('Could not add clickable PDF link:', linkErr);
       }
 
       const custName = selectedCustomer?.customer_name || 'Customer';
@@ -949,6 +1097,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         taxable_amount: taxableAmount,
         tax_rate: taxDetails.rate,
         tax_amount: taxDetails.totalTax,
+        freight_charges: parseFloat(freightCharges) || 0,
         round_off: roundOff,
         grand_total: grandTotal,
         terms: terms,
@@ -1028,6 +1177,8 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     } else {
       setDiscountValue(0);
     }
+
+    setFreightCharges(Number(q.freight_charges || q.freight || 0));
 
     if (q.tax_rate !== undefined) {
       const tr = Number(q.tax_rate);
@@ -1157,6 +1308,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       customer_id: selectedCustomer?.customer_id || selectedCustomerId,
       customer_name: selectedCustomer?.customer_name || 'Customer',
       grand_total: grandTotal,
+      freight_charges: parseFloat(freightCharges) || 0,
       subtotal: subtotal,
       discount_amount: discountAmount,
       items: validItems.map(it => ({
@@ -1299,10 +1451,256 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     window.print();
   };
 
+  // Render letterhead paper with fixed desktop A4 dimensions & crisp typography
+  const renderLetterheadPaper = () => (
+    <div
+      id="quotation-letterhead-paper"
+      ref={previewPaperRef}
+      className="w-[794px] min-w-[794px] max-w-[794px] bg-white text-slate-900 p-10 shadow-2xl rounded-sm border border-slate-300 min-h-[1100px] flex flex-col justify-between"
+      style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+    >
+      <div>
+        {/* Header: Company Name, Logo & Brand */}
+        <div className="flex flex-row items-start justify-between border-b-2 border-indigo-600 pb-5 mb-5 gap-4">
+          <div className="flex items-start gap-4 max-w-lg">
+            <img
+              src={aecLogo}
+              alt="ARHAM ENGG CO."
+              className="h-16 w-auto object-contain shrink-0"
+            />
+            <div>
+              <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                ARHAM ENGG CO.
+              </h1>
+              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-widest mt-0.5">
+                Distributors & Suppliers of Industrial & Electrical Items
+              </p>
+              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.
+              </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-slate-700 font-medium mt-1">
+                <span>GSTIN: <strong className="font-mono text-slate-900 font-bold">33ADPPB7680M1Z3</strong></span>
+                <span>Email: <strong className="font-semibold text-slate-900">ravibardia@hotmail.com</strong></span>
+                <span>Website: <a id="letterhead-website-link" href="https://arhamenggco.in/" target="_blank" rel="noopener noreferrer" className="font-semibold text-indigo-700 hover:underline">https://arhamenggco.in/</a></span>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-right space-y-1 self-start shrink-0">
+            <div className="inline-block px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 font-extrabold text-sm uppercase tracking-wider rounded">
+              QUOTATION
+            </div>
+            <div className="text-xs font-mono font-bold text-slate-800">{quotationNo}</div>
+            <div className="text-[11px] text-slate-500">Date: <strong className="text-slate-800">{formatDateOnly(quotationDate)}</strong></div>
+            <div className="text-[11px] text-slate-500">Valid Till: <strong className="text-slate-800">{formatDateOnly(validUntil)}</strong></div>
+          </div>
+        </div>
+
+        {/* Customer / Quotation-To Section */}
+        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs mb-5">
+          <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">QUOTATION TO:</div>
+          <div className="font-bold text-sm text-slate-900">{selectedCustomer?.customer_name || 'Valued Customer'}</div>
+          {selectedCustomer?.gstin && (
+            <div className="text-slate-600 mt-0.5">GSTIN: <strong className="font-mono text-slate-800">{selectedCustomer.gstin}</strong></div>
+          )}
+          {selectedCustomer?.address && (
+            <div className="text-slate-500 text-[11px] mt-1 leading-relaxed max-w-xl">{selectedCustomer.address}</div>
+          )}
+        </div>
+
+        {/* Items Table */}
+        <div className="mb-6">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-y-2 border-slate-800 bg-slate-100 text-slate-800 font-bold uppercase text-[10px] tracking-wider">
+                <th className="py-2.5 px-2 w-8 text-center">#</th>
+                <th className="py-2.5 px-3">Item Description</th>
+                <th className="py-2.5 px-2 w-24">Make</th>
+                <th className="py-2.5 px-2 w-14 text-center">UOM</th>
+                <th className="py-2.5 px-2 w-14 text-center">Qty</th>
+                <th className="py-2.5 px-3 w-24 text-right">Rate</th>
+                <th className="py-2.5 px-2 w-16 text-center">Disc</th>
+                <th className="py-2.5 px-3 w-24 text-right">Amount</th>
+                <th className="py-2.5 px-3 w-28">Remark</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {items.map((item, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/50">
+                  <td className="py-2.5 px-2 text-center text-slate-400 font-mono">{idx + 1}</td>
+                  <td className="py-2.5 px-3 font-bold text-slate-900">
+                    {item.product_name || 'Item'}
+                  </td>
+                  <td className="py-2.5 px-2 font-medium text-slate-700">{item.make || '-'}</td>
+                  <td className="py-2.5 px-2 text-center font-bold text-slate-800">{item.uom || 'Nos'}</td>
+                  <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-900">{item.qty}</td>
+                  <td className="py-2.5 px-3 text-right font-mono text-slate-900">
+                    ₹{Number(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2.5 px-2 text-center font-mono text-slate-600 text-[11px]">
+                    {parseFloat(item.discount_val) > 0 ? `${item.discount_val}${item.discount_type === 'fixed' ? '₹' : '%'}` : '-'}
+                  </td>
+                  <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                    ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2.5 px-3 text-slate-600 text-[11px] italic">
+                    {item.remark || '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="border-t-2 border-slate-800 text-xs">
+              {/* Subtotal Row - exactly below Amount column */}
+              <tr className="font-bold bg-slate-50/70 border-b border-slate-200">
+                <td colSpan={7} className="py-2.5 px-3 text-right text-slate-700 font-bold uppercase text-[11px] tracking-wide">
+                  Subtotal:
+                </td>
+                <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                  ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+                <td className="py-2.5 px-3"></td>
+              </tr>
+
+              {/* Quotation Discount if applied */}
+              {discountAmount > 0 && (
+                <tr className="text-emerald-700 border-b border-slate-200">
+                  <td colSpan={7} className="py-2 px-3 text-right font-semibold text-[11px]">
+                    Discount ({discountType === 'percent' ? `${discountValue}%` : 'Flat'}):
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
+                    -₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2 px-3"></td>
+                </tr>
+              )}
+
+              {/* Taxable Amount if discount was present */}
+              {discountAmount > 0 && (
+                <tr className="text-slate-700 border-b border-slate-200 font-semibold">
+                  <td colSpan={7} className="py-2 px-3 text-right text-[11px]">
+                    Taxable Value:
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono text-slate-900">
+                    ₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2 px-3"></td>
+                </tr>
+              )}
+
+              {/* Tax Details */}
+              {taxDetails.rate > 0 && (
+                <>
+                  {taxDetails.isSplit ? (
+                    <>
+                      <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                        <td colSpan={7} className="py-1.5 px-3 text-right">
+                          CGST (9%):
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-mono">
+                          ₹{taxDetails.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-1.5 px-3"></td>
+                      </tr>
+                      <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                        <td colSpan={7} className="py-1.5 px-3 text-right">
+                          SGST (9%):
+                        </td>
+                        <td className="py-1.5 px-3 text-right font-mono">
+                          ₹{taxDetails.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-1.5 px-3"></td>
+                      </tr>
+                    </>
+                  ) : (
+                    <tr className="text-slate-600 text-[11px] border-b border-slate-100">
+                      <td colSpan={7} className="py-1.5 px-3 text-right">
+                        {taxDetails.label}:
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-mono">
+                        ₹{taxDetails.totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-1.5 px-3"></td>
+                    </tr>
+                  )}
+                </>
+              )}
+
+              {/* Freight Charges */}
+              {parseFloat(freightCharges) > 0 && (
+                <tr className="text-slate-700 text-[11px] border-b border-slate-100 font-semibold">
+                  <td colSpan={7} className="py-1.5 px-3 text-right">
+                    Freight Charges:
+                  </td>
+                  <td className="py-1.5 px-3 text-right font-mono text-slate-900 font-bold">
+                    +₹{(parseFloat(freightCharges) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-1.5 px-3"></td>
+                </tr>
+              )}
+
+              {/* Round off */}
+              {Math.abs(roundOff) > 0.001 && (
+                <tr className="text-slate-500 text-[11px] border-b border-slate-100">
+                  <td colSpan={7} className="py-1.5 px-3 text-right">
+                    Round Off:
+                  </td>
+                  <td className="py-1.5 px-3 text-right font-mono">
+                    {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}
+                  </td>
+                  <td className="py-1.5 px-3"></td>
+                </tr>
+              )}
+
+              {/* Grand Total */}
+              <tr className="border-t-2 border-b-2 border-slate-900 bg-slate-100/90 text-slate-900 font-black">
+                <td colSpan={7} className="py-3 px-3 text-right font-bold text-xs uppercase tracking-wider text-slate-900">
+                  GRAND TOTAL (INR):
+                </td>
+                <td className="py-3 px-3 text-right font-mono text-indigo-700 font-extrabold text-sm">
+                  ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+                <td className="py-3 px-3"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {/* Amount In Words Box */}
+        <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs mb-5">
+          <span className="font-bold text-slate-700">Amount in Words: </span>
+          <span className="italic text-slate-800">{amountInWords}</span>
+        </div>
+
+        {/* Terms and Notes */}
+        <div className="text-[11px] text-slate-600 space-y-1 mb-6">
+          <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Terms & Conditions:</div>
+          <div className="whitespace-pre-line leading-relaxed">{terms}</div>
+        </div>
+      </div>
+
+      {/* Footer / Signatures */}
+      <div className="pt-4 border-t border-slate-200 flex justify-between items-end text-xs text-slate-500">
+        <div>
+          <p className="text-[10px] text-slate-400">This is a computer generated quotation.</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            Website: <a href="https://arhamenggco.in/" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-medium">https://arhamenggco.in/</a>
+          </p>
+        </div>
+
+        <div className="text-right">
+          <div className="font-bold text-slate-800 mb-7">For ARHAM ENGG CO.</div>
+          <div className="border-t border-slate-400 pt-1 text-[11px] font-semibold text-slate-700 inline-block w-48 text-center">
+            Authorized Signatory
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-6 pb-20">
       {/* Top Banner Header & Mode Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <FileText className="w-6 h-6 text-indigo-600 shrink-0" />
@@ -1314,52 +1712,55 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         </div>
 
         {/* View Switcher: Builder vs Letterhead Preview vs Saved & New Quotation */}
-        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full lg:w-auto">
           <button
             type="button"
             onClick={handleNewQuotation}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer whitespace-nowrap"
             title="Create a fresh quotation and refresh form"
           >
-            <Plus className="w-3.5 h-3.5 text-indigo-600" />
-            New Quotation
+            <Plus className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>New Quotation</span>
           </button>
 
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto">
             <button
               onClick={() => setActiveTab('builder')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'builder'
+              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'builder'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
-                }`}
+              }`}
             >
-              <Edit3 className="w-3.5 h-3.5" />
-              1. Edit & Configure
+              <Edit3 className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span>1. Edit & Configure</span>
             </button>
             <button
               onClick={() => setActiveTab('preview')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'preview'
+              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'preview'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
-                }`}
+              }`}
             >
-              <Eye className="w-3.5 h-3.5" />
-              2. Letterhead Preview
+              <Eye className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span>2. Letterhead Preview</span>
             </button>
             <button
               onClick={() => {
                 setActiveTab('saved');
                 loadSavedQuotations();
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${activeTab === 'saved'
+              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+                activeTab === 'saved'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
-                }`}
+              }`}
             >
-              <Layers className="w-3.5 h-3.5" />
-              3. Saved Quotations
+              <Layers className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span>3. Saved Quotations</span>
               {savedQuotations.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full">
+                <span className="ml-1.5 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full shrink-0">
                   {savedQuotations.length}
                 </span>
               )}
@@ -1397,126 +1798,315 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       )}
 
       {/* Export Actions Sticky/Action Bar */}
-      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white p-4 rounded-2xl shadow-md flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
-            <Sparkles className="w-4 h-4" />
+      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white p-3.5 sm:p-4 rounded-2xl shadow-md">
+        {/* Mobile Layout (sm:hidden) */}
+        <div className="sm:hidden w-full flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] text-indigo-200 font-medium flex items-center gap-1.5 flex-wrap leading-tight">
+                  <span>Grand Total (Incl. GST)</span>
+                  {lastSavedTime && (
+                    <span className="text-[9px] text-emerald-300 font-semibold bg-emerald-950/80 px-1.5 py-0.2 rounded-full border border-emerald-500/40">
+                      ✓ Saved
+                    </span>
+                  )}
+                  {currentOrderStatus === 'CONFIRMED' && (
+                    <span className="text-[9px] text-emerald-300 font-bold bg-emerald-900/90 px-1.5 py-0.2 rounded-full border border-emerald-400/50 flex items-center gap-0.5">
+                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                      Confirmed
+                    </span>
+                  )}
+                </div>
+                <div className="text-base font-bold font-mono tracking-tight text-white flex items-center gap-1">
+                  ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-[10px] text-slate-300 font-normal">({items.length} items)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Mobile Export Dropdown Trigger Button */}
+            <div className="relative shrink-0" ref={exportDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setMobileExportOpen(!mobileExportOpen)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-white rounded-xl text-xs font-bold border border-slate-700 shadow-sm cursor-pointer transition-all"
+                title="Export or download quotation in Excel, PDF, Image or Print"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Export</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-300 transition-transform duration-200 ${mobileExportOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Mobile Export Menu Popup */}
+              {mobileExportOpen && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200/90 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 mb-1">
+                    <span>Export Quotation</span>
+                    <span className="text-[9px] text-slate-400 font-normal">Select Format</span>
+                  </div>
+
+                  {/* Excel (.xlsx) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileExportOpen(false);
+                      handleExportExcel();
+                    }}
+                    disabled={isExporting}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 transition-colors cursor-pointer group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 shrink-0">
+                      <FileSpreadsheet className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                        <span>Excel Spreadsheet</span>
+                        <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-100/60 px-1.5 py-0.2 rounded">.xlsx</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate">Formatted table with GST</div>
+                    </div>
+                  </button>
+
+                  {/* PDF Document (.pdf) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileExportOpen(false);
+                      handleExportPdf();
+                    }}
+                    disabled={isExporting}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-rose-50 text-slate-700 hover:text-rose-800 transition-colors cursor-pointer group mt-0.5"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600 group-hover:bg-rose-200 shrink-0">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                        <span>PDF Document</span>
+                        <span className="text-[10px] text-rose-600 font-semibold bg-rose-100/60 px-1.5 py-0.2 rounded">.pdf</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate">A4 Letterhead print format</div>
+                    </div>
+                  </button>
+
+                  {/* Image (.png) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileExportOpen(false);
+                      handleExportImage();
+                    }}
+                    disabled={isExporting}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-sky-50 text-slate-700 hover:text-sky-800 transition-colors cursor-pointer group mt-0.5"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-200 shrink-0">
+                      <Image className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                        <span>Image Export</span>
+                        <span className="text-[10px] text-sky-600 font-semibold bg-sky-100/60 px-1.5 py-0.2 rounded">.png</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate">High-res for WhatsApp / share</div>
+                    </div>
+                  </button>
+
+                  {/* Print Document */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileExportOpen(false);
+                      handlePrint();
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition-colors cursor-pointer group mt-0.5"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700 group-hover:bg-slate-200 shrink-0">
+                      <Printer className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold leading-tight">Print Document</div>
+                      <div className="text-[10px] text-slate-400 truncate">Standard system print dialog</div>
+                    </div>
+                  </button>
+
+                </div>
+              )}
+            </div>
           </div>
-          <div>
-            <div className="text-xs text-indigo-200 font-medium flex items-center gap-2">
-              <span>Grand Total (Incl. GST)</span>
-              {lastSavedTime && (
-                <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/40">
-                  ✓ Saved ({lastSavedTime})
-                </span>
-              )}
-              {currentOrderStatus === 'CONFIRMED' && (
-                <span className="text-[10px] text-emerald-300 font-bold bg-emerald-900/90 px-2 py-0.5 rounded-full border border-emerald-400/50 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  Order Confirmed
-                </span>
-              )}
-            </div>
-            <div className="text-lg font-bold font-mono tracking-tight text-white flex items-center gap-1">
-              ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              <span className="text-[11px] text-slate-300 font-normal">({items.length} items)</span>
-            </div>
+
+          {/* Mobile Bottom Action Row */}
+          <div className="flex items-center gap-2 pt-2 border-t border-indigo-800/40">
+            {isOrderConfirmed ? (
+              <span className="w-full flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold truncate">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate">Order Confirmed (Prices Locked)</span>
+              </span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveToSheets}
+                  disabled={isSaving || isExporting}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
+                  title="Save quotation"
+                >
+                  {isSaving ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isSaving ? 'Saving...' : 'Save'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleInitiateConfirmOrder()}
+                  disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
+                  title="Confirm order"
+                >
+                  {isConfirmingOrder ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isConfirmingOrder ? 'Confirming...' : 'Confirm'}</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* New Quotation Button (Always Available) */}
-          <button
-            type="button"
-            onClick={handleNewQuotation}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold border border-slate-700 shadow-xs cursor-pointer transition-all"
-            title="Create a fresh quotation with an automatically generated unique quotation number"
-          >
-            <Plus className="w-3.5 h-3.5 text-indigo-400" />
-            New Quotation
-          </button>
-
-          {isOrderConfirmed ? (
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                Order Confirmed (Prices Locked)
-              </span>
+        {/* Desktop Layout (hidden sm:flex) */}
+        <div className="hidden sm:flex flex-wrap items-center justify-between gap-4 w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
+              <Sparkles className="w-4 h-4" />
             </div>
-          ) : (
-            <>
-              {/* Save Quotation Button */}
-              <button
-                onClick={handleSaveToSheets}
-                disabled={isSaving || isExporting}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
-                title="Save this quotation and line items"
-              >
-                {isSaving ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
-                ) : (
-                  <Save className="w-3.5 h-3.5" />
+            <div>
+              <div className="text-xs text-indigo-200 font-medium flex items-center gap-2">
+                <span>Grand Total (Incl. GST)</span>
+                {lastSavedTime && (
+                  <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/40">
+                    ✓ Saved ({lastSavedTime})
+                  </span>
                 )}
-                {isSaving ? 'Saving...' : 'Save Quotation'}
-              </button>
-
-              {/* Confirm Order Button */}
-              <button
-                onClick={() => handleInitiateConfirmOrder()}
-                disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
-                title="Confirm order: permanently updates customer pricing and preserves price history"
-              >
-                {isConfirmingOrder ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
-                ) : (
-                  <ShoppingBag className="w-3.5 h-3.5" />
+                {currentOrderStatus === 'CONFIRMED' && (
+                  <span className="text-[10px] text-emerald-300 font-bold bg-emerald-900/90 px-2 py-0.5 rounded-full border border-emerald-400/50 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    Order Confirmed
+                  </span>
                 )}
-                {isConfirmingOrder ? 'Updating Prices...' : 'Confirm Order'}
-              </button>
-            </>
-          )}
+              </div>
+              <div className="text-lg font-bold font-mono tracking-tight text-white flex items-center gap-1">
+                ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-[11px] text-slate-300 font-normal">({items.length} items)</span>
+              </div>
+            </div>
+          </div>
 
-          {/* Excel Export Button */}
-          <button
-            onClick={handleExportExcel}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            Excel (.xlsx)
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {isOrderConfirmed ? (
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  Order Confirmed (Prices Locked)
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* Save Quotation Button */}
+                <button
+                  onClick={handleSaveToSheets}
+                  disabled={isSaving || isExporting}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
+                  title="Save this quotation and line items"
+                >
+                  {isSaving ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  {isSaving ? 'Saving...' : 'Save Quotation'}
+                </button>
 
-          {/* PDF Export Button */}
-          <button
-            onClick={handleExportPdf}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            PDF Document
-          </button>
+                {/* Confirm Order Button */}
+                <button
+                  onClick={() => handleInitiateConfirmOrder()}
+                  disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
+                  title="Confirm order: permanently updates customer pricing and preserves price history"
+                >
+                  {isConfirmingOrder ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                  ) : (
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                  )}
+                  {isConfirmingOrder ? 'Updating Prices...' : 'Confirm Order'}
+                </button>
+              </>
+            )}
 
-          {/* Image Export Button */}
-          <button
-            onClick={handleExportImage}
-            disabled={isExporting}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
-          >
-            <Image className="w-3.5 h-3.5" />
-            Image (.png)
-          </button>
+            {/* Excel Export Button */}
+            <button
+              onClick={handleExportExcel}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Excel (.xlsx)
+            </button>
 
-          {/* Print Button */}
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 shadow-xs transition-all cursor-pointer"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            Print
-          </button>
+            {/* PDF Export Button */}
+            <button
+              onClick={handleExportPdf}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              PDF Document
+            </button>
+
+            {/* Image Export Button */}
+            <button
+              onClick={handleExportImage}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+            >
+              <Image className="w-3.5 h-3.5" />
+              Image (.png)
+            </button>
+
+            {/* Print Button */}
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 shadow-xs transition-all cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Print
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Export Progress Modal Overlay */}
+      {isExporting && (
+        <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 shadow-2xl border border-slate-200 max-w-sm w-full text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 mx-auto flex items-center justify-center">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <h3 className="font-bold text-slate-900 text-base">Preparing Quotation Export</h3>
+            <p className="text-xs text-slate-500 font-medium">
+              {exportMessage?.text || 'Generating standard A4 document...'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: BUILDER / EDITOR VIEW */}
       {activeTab === 'builder' && (
@@ -1540,14 +2130,6 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleNewQuotation}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Create New Quotation
-              </button>
             </div>
           )}
 
@@ -1924,7 +2506,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 Taxes, Discount & Commercial Terms
               </h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* GST / Tax Selection */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">GST / Tax Slab</label>
@@ -1987,6 +2569,29 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                       Apply Quotation Discount to All Items
                     </button>
                   )}
+                </div>
+
+                {/* Freight Charges */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                    <label className="flex items-center gap-1.5">
+                      <Truck className="w-3.5 h-3.5 text-indigo-600" />
+                      Freight Charges (₹)
+                    </label>
+                    {parseFloat(freightCharges) > 0 && (
+                      <span className="text-[10px] text-emerald-600 font-bold">Added to Total</span>
+                    )}
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={freightCharges}
+                    onChange={(e) => setFreightCharges(e.target.value)}
+                    disabled={isOrderConfirmed}
+                    placeholder="0.00"
+                    className="w-full h-10 bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
+                  />
                 </div>
               </div>
 
@@ -2062,6 +2667,18 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                     </>
                   )}
 
+                  {parseFloat(freightCharges) > 0 && (
+                    <div className="flex items-center justify-between text-slate-700">
+                      <span className="flex items-center gap-1 font-medium">
+                        <Truck className="w-3.5 h-3.5 text-indigo-500" />
+                        Freight Charges:
+                      </span>
+                      <span className="font-mono font-bold text-slate-900">
+                        +₹{(parseFloat(freightCharges) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
+
                   {Math.abs(roundOff) > 0.001 && (
                     <div className="flex items-center justify-between text-slate-400 text-[11px]">
                       <span>Round Off:</span>
@@ -2082,6 +2699,113 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                       ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
+
+                  {/* Export Options Dropdown */}
+                  <div className="relative" ref={bottomExportDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setBottomExportOpen(!bottomExportOpen)}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl text-xs font-bold border border-indigo-400/40 shadow-xs cursor-pointer transition-all"
+                      title="Export quotation options"
+                    >
+                      <Download className="w-3.5 h-3.5 text-indigo-200" />
+                      <span>Export</span>
+                      <ChevronDown className={`w-3.5 h-3.5 text-indigo-200 transition-transform duration-200 ${bottomExportOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {bottomExportOpen && (
+                      <div className="absolute right-0 bottom-full mb-2 w-64 bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200/90 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 mb-1">
+                          <span>Export Quotation</span>
+                          <span className="text-[9px] text-slate-400 font-normal">Select Format</span>
+                        </div>
+
+                        {/* Excel (.xlsx) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBottomExportOpen(false);
+                            handleExportExcel();
+                          }}
+                          disabled={isExporting}
+                          className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 transition-colors cursor-pointer group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 shrink-0">
+                            <FileSpreadsheet className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                              <span>Excel Spreadsheet</span>
+                              <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-100/60 px-1.5 py-0.2 rounded">.xlsx</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">Formatted table with GST</div>
+                          </div>
+                        </button>
+
+                        {/* PDF Document (.pdf) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBottomExportOpen(false);
+                            handleExportPdf();
+                          }}
+                          disabled={isExporting}
+                          className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-rose-50 text-slate-700 hover:text-rose-800 transition-colors cursor-pointer group mt-0.5"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600 group-hover:bg-rose-200 shrink-0">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                              <span>PDF Document</span>
+                              <span className="text-[10px] text-rose-600 font-semibold bg-rose-100/60 px-1.5 py-0.2 rounded">.pdf</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">A4 Letterhead print format</div>
+                          </div>
+                        </button>
+
+                        {/* Image (.png) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBottomExportOpen(false);
+                            handleExportImage();
+                          }}
+                          disabled={isExporting}
+                          className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-sky-50 text-slate-700 hover:text-sky-800 transition-colors cursor-pointer group mt-0.5"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-200 shrink-0">
+                            <Image className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                              <span>Image Export</span>
+                              <span className="text-[10px] text-sky-600 font-semibold bg-sky-100/60 px-1.5 py-0.2 rounded">.png</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">High-res for WhatsApp / share</div>
+                          </div>
+                        </button>
+
+                        {/* Print Document */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBottomExportOpen(false);
+                            handlePrint();
+                          }}
+                          className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition-colors cursor-pointer group mt-0.5"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700 group-hover:bg-slate-200 shrink-0">
+                            <Printer className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold leading-tight">Print Document</div>
+                            <div className="text-[10px] text-slate-400 truncate">Standard system print dialog</div>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="text-[11px] text-slate-500 italic bg-white/80 p-2.5 rounded-lg border border-slate-200">
@@ -2090,22 +2814,14 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 </div>
 
                 {isOrderConfirmed ? (
-                  <div className="space-y-2 pt-2">
+                  <div className="pt-2">
                     <div className="p-3 bg-emerald-100/80 border border-emerald-300 rounded-xl text-center text-xs font-bold text-emerald-800 flex items-center justify-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                       Order Confirmed - Prices Permanently Locked
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleNewQuotation}
-                      className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Create New Quotation
-                    </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
                     <button
                       type="button"
                       onClick={handleSaveToSheets}
@@ -2127,16 +2843,6 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                       {isConfirmingOrder ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" /> : <ShoppingBag className="w-3.5 h-3.5 shrink-0" />}
                       <span className="truncate">{isConfirmingOrder ? 'Confirming...' : 'Confirm Order'}</span>
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={handleNewQuotation}
-                      className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 hover:border-slate-400 shadow-2xs transition-all cursor-pointer text-center"
-                      title="Start a fresh blank quotation"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                      <span className="truncate">New Quotation</span>
-                    </button>
                   </div>
                 )}
               </div>
@@ -2145,248 +2851,123 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         </div>
       )}
 
-      {/* TAB 2: LETTERHEAD PREVIEW (also used as capture target for PDF & Image exports) */}
+      {/* TAB 2: LETTERHEAD PREVIEW (Interactive Responsive View & PDF Target) */}
       <div className={`${activeTab === 'preview' ? 'block' : 'hidden'} space-y-4`}>
-        <div className="flex items-center justify-between bg-slate-100 p-3 rounded-xl border border-slate-200 text-xs text-slate-600">
-          <div className="flex items-center gap-2">
-            <Eye className="w-4 h-4 text-indigo-600" />
-            <span>This is how your quotation will appear when exported or printed.</span>
+        {/* Responsive Preview Controls Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-xs text-xs">
+          <div className="flex items-center gap-2 text-slate-700">
+            <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span className="font-bold text-slate-800 hidden sm:inline">A4 Letterhead Print Preview</span>
+            <span className="font-bold text-slate-800 sm:hidden">Letterhead</span>
+            <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 text-[10px] font-semibold">
+              {previewScale < 1 && previewZoomMode === 'fit' ? `Fit (${Math.round(previewScale * 100)}%)` : '100% A4'}
+            </span>
           </div>
-          <button
-            onClick={() => setActiveTab('builder')}
-            className="text-indigo-600 font-bold hover:underline"
-          >
-            ← Back to Edit
-          </button>
+
+          <div className="flex items-center gap-2">
+            {/* View Mode Toggle: Fit to Screen vs 100% Zoom */}
+            {previewScale < 1 && (
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoomMode('fit')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                    previewZoomMode === 'fit' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Fit whole letterhead onto phone screen"
+                >
+                  Fit Screen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoomMode('100')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                    previewZoomMode === '100' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="View at 100% original scale (swipe horizontally)"
+                >
+                  100% Zoom
+                </button>
+              </div>
+            )}
+
+            {/* Quick Export PDF Button */}
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
+              title="Download standard A4 PDF document"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>PDF</span>
+            </button>
+
+            {/* Print Button */}
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="hidden xs:flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold border border-slate-200 transition-all cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print</span>
+            </button>
+
+            {/* Back to Edit Button */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('builder')}
+              className="text-indigo-600 font-bold hover:underline px-2 py-1 text-xs"
+            >
+              ← Edit
+            </button>
+          </div>
         </div>
 
-        {/* Paper Container (Styled for standard A4 document layout) */}
-        <div className="overflow-x-auto p-4 sm:p-6 bg-slate-200/60 rounded-2xl flex justify-center">
-          <div
-            id="quotation-letterhead-paper"
-            ref={previewPaperRef}
-            className="w-full max-w-[850px] bg-white text-slate-900 p-8 sm:p-12 shadow-2xl rounded-sm border border-slate-200 min-h-[1050px] flex flex-col justify-between"
-            style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
-          >
-            <div>
-              {/* Header: Company Name, Logo & Brand */}
-              <div className="flex flex-col sm:flex-row items-start justify-between border-b-2 border-indigo-600 pb-6 mb-6 gap-4">
-                <div className="flex items-start gap-4 max-w-lg">
-                  <img
-                    src={aecLogo}
-                    alt="ARHAM ENGG CO."
-                    className="h-16 w-auto object-contain shrink-0"
-                  />
-                  <div>
-                    <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                      ARHAM ENGG CO.
-                    </h1>
-                    <p className="text-xs font-semibold text-indigo-700 uppercase tracking-widest mt-0.5">
-                      Distributors & Suppliers of Industrial & Electrical Items
-                    </p>
-                    <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">
-                      OLD NO.113 NEW NO.231, F4, FIRST FLOOR, RAJINI'S SHANMUGA BUILDING, Thambu Chetty St, Parrys, George Town, Chennai, Tamil Nadu 600001.
-                    </p>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] text-slate-700 font-medium mt-1">
-                      <span>GSTIN: <strong className="font-mono text-slate-900 font-bold">33ADPPB7680M1Z3</strong></span>
-                      <span>Email: <strong className="font-semibold text-slate-900">ravibardia@hotmail.com</strong></span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-right space-y-1 self-end sm:self-start shrink-0">
-                  <div className="inline-block px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 font-extrabold text-sm uppercase tracking-wider rounded">
-                    QUOTATION
-                  </div>
-                  <div className="text-xs font-mono font-bold text-slate-800">{quotationNo}</div>
-                  <div className="text-[11px] text-slate-500">Date: <strong className="text-slate-800">{formatDateOnly(quotationDate)}</strong></div>
-                  <div className="text-[11px] text-slate-500">Valid Till: <strong className="text-slate-800">{formatDateOnly(validUntil)}</strong></div>
-                </div>
-              </div>
-
-              {/* Customer / Quotation-To Section (Supplier details removed as requested) */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs mb-6">
-                <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">QUOTATION TO:</div>
-                <div className="font-bold text-sm text-slate-900">{selectedCustomer?.customer_name || 'Valued Customer'}</div>
-                {selectedCustomer?.gstin && (
-                  <div className="text-slate-600 mt-0.5">GSTIN: <strong className="font-mono text-slate-800">{selectedCustomer.gstin}</strong></div>
-                )}
-                {selectedCustomer?.address && (
-                  <div className="text-slate-500 text-[11px] mt-1 leading-relaxed max-w-xl">{selectedCustomer.address}</div>
-                )}
-              </div>
-
-              {/* Items Table */}
-              <div className="mb-6">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-y-2 border-slate-800 bg-slate-100 text-slate-800 font-bold uppercase text-[10px] tracking-wider">
-                      <th className="py-2.5 px-2 w-8 text-center">#</th>
-                      <th className="py-2.5 px-3">Item Description</th>
-                      <th className="py-2.5 px-2 w-24">Make</th>
-                      <th className="py-2.5 px-2 w-14 text-center">UOM</th>
-                      <th className="py-2.5 px-2 w-14 text-center">Qty</th>
-                      <th className="py-2.5 px-3 w-24 text-right">Rate</th>
-                      <th className="py-2.5 px-2 w-16 text-center">Disc</th>
-                      <th className="py-2.5 px-3 w-24 text-right">Amount</th>
-                      <th className="py-2.5 px-3 w-28">Remark</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {items.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/50">
-                        <td className="py-2.5 px-2 text-center text-slate-400 font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-900">
-                          {item.product_name || 'Item'}
-                        </td>
-                        <td className="py-2.5 px-2 font-medium text-slate-700">{item.make || '-'}</td>
-                        <td className="py-2.5 px-2 text-center font-bold text-slate-800">{item.uom || 'Nos'}</td>
-                        <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-900">{item.qty}</td>
-                        <td className="py-2.5 px-3 text-right font-mono text-slate-900">
-                          ₹{Number(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-2 text-center font-mono text-slate-600 text-[11px]">
-                          {parseFloat(item.discount_val) > 0 ? `${item.discount_val}${item.discount_type === 'fixed' ? '₹' : '%'}` : '-'}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
-                          ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-600 text-[11px] italic">
-                          {item.remark || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t-2 border-slate-800 text-xs">
-                    {/* Subtotal Row - exactly below Amount column */}
-                    <tr className="font-bold bg-slate-50/70 border-b border-slate-200">
-                      <td colSpan={7} className="py-2.5 px-3 text-right text-slate-700 font-bold uppercase text-[11px] tracking-wide">
-                        Subtotal:
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
-                        ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-2.5 px-3"></td>
-                    </tr>
-
-                    {/* Quotation Discount if applied */}
-                    {discountAmount > 0 && (
-                      <tr className="text-emerald-700 border-b border-slate-200">
-                        <td colSpan={7} className="py-2 px-3 text-right font-semibold text-[11px]">
-                          Discount ({discountType === 'percent' ? `${discountValue}%` : 'Flat'}):
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
-                          -₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2 px-3"></td>
-                      </tr>
-                    )}
-
-                    {/* Taxable Amount if discount was present */}
-                    {discountAmount > 0 && (
-                      <tr className="text-slate-700 border-b border-slate-200 font-semibold">
-                        <td colSpan={7} className="py-2 px-3 text-right text-[11px]">
-                          Taxable Value:
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-slate-900">
-                          ₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2 px-3"></td>
-                      </tr>
-                    )}
-
-                    {/* Tax Details */}
-                    {taxDetails.rate > 0 && (
-                      <>
-                        {taxDetails.isSplit ? (
-                          <>
-                            <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                              <td colSpan={7} className="py-1.5 px-3 text-right">
-                                CGST (9%):
-                              </td>
-                              <td className="py-1.5 px-3 text-right font-mono">
-                                ₹{taxDetails.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-1.5 px-3"></td>
-                            </tr>
-                            <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                              <td colSpan={7} className="py-1.5 px-3 text-right">
-                                SGST (9%):
-                              </td>
-                              <td className="py-1.5 px-3 text-right font-mono">
-                                ₹{taxDetails.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-1.5 px-3"></td>
-                            </tr>
-                          </>
-                        ) : (
-                          <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                            <td colSpan={7} className="py-1.5 px-3 text-right">
-                              {taxDetails.label}:
-                            </td>
-                            <td className="py-1.5 px-3 text-right font-mono">
-                              ₹{taxDetails.totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-1.5 px-3"></td>
-                          </tr>
-                        )}
-                      </>
-                    )}
-
-                    {/* Round off */}
-                    {Math.abs(roundOff) > 0.001 && (
-                      <tr className="text-slate-500 text-[11px] border-b border-slate-100">
-                        <td colSpan={7} className="py-1.5 px-3 text-right">
-                          Round Off:
-                        </td>
-                        <td className="py-1.5 px-3 text-right font-mono">
-                          {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}
-                        </td>
-                        <td className="py-1.5 px-3"></td>
-                      </tr>
-                    )}
-
-                    {/* Grand Total */}
-                    <tr className="border-t-2 border-b-2 border-slate-900 bg-slate-100/90 text-slate-900 font-black">
-                      <td colSpan={7} className="py-3 px-3 text-right font-bold text-xs uppercase tracking-wider text-slate-900">
-                        GRAND TOTAL (INR):
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono text-indigo-700 font-extrabold text-sm">
-                        ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-3"></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-
-              {/* Amount In Words Box */}
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs mb-6">
-                <span className="font-bold text-slate-700">Amount in Words: </span>
-                <span className="italic text-slate-800">{amountInWords}</span>
-              </div>
-
-              {/* Terms and Notes */}
-              <div className="text-[11px] text-slate-600 space-y-1 mb-8">
-                <div className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Terms & Conditions:</div>
-                <div className="whitespace-pre-line leading-relaxed">{terms}</div>
-              </div>
-            </div>
-
-            {/* Footer / Signatures */}
-            <div className="pt-6 border-t border-slate-200 flex justify-between items-end text-xs text-slate-500">
-              <div>
-                <p className="text-[10px] text-slate-400">This is a computer generated quotation.</p>
-              </div>
-
-              <div className="text-right">
-                <div className="font-bold text-slate-800 mb-8">For ARHAM ENGG CO.</div>
-                <div className="border-t border-slate-400 pt-1 text-[11px] font-semibold text-slate-700 inline-block w-48 text-center">
-                  Authorized Signatory
+        {/* Paper Container (Styled for standard A4 document layout with dynamic responsive scaling) */}
+        <div 
+          ref={previewContainerRef}
+          className="w-full bg-slate-200/60 rounded-2xl p-2 sm:p-6 flex flex-col items-center"
+        >
+          {previewScale < 1 && previewZoomMode === 'fit' ? (
+            <div className="w-full flex justify-center py-2 overflow-hidden">
+              {/* Sized container that matches the exact scaled dimensions */}
+              <div
+                className="relative shadow-2xl rounded-sm bg-white shrink-0 overflow-hidden"
+                style={{
+                  width: `${Math.round(794 * previewScale)}px`,
+                  height: `${Math.round((paperHeight || 1120) * previewScale)}px`
+                }}
+              >
+                {/* Scaled letterhead element using top-left origin */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '794px',
+                    minWidth: '794px',
+                    maxWidth: '794px',
+                    transform: `scale(${previewScale})`,
+                    transformOrigin: 'top left'
+                  }}
+                >
+                  {renderLetterheadPaper()}
                 </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="w-full overflow-x-auto flex justify-start sm:justify-center p-1 sm:p-4">
+              {renderLetterheadPaper()}
+            </div>
+          )}
+
+          {/* Swipe indicator when user selects 100% zoom on a mobile screen */}
+          {previewScale < 1 && previewZoomMode === '100' && (
+            <div className="mt-3 text-[11px] text-slate-600 flex items-center gap-1.5 bg-white/95 px-3.5 py-1.5 rounded-full border border-slate-300 shadow-2xs">
+              <span>↔ Swipe left or right to inspect the full document</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2406,22 +2987,15 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 self-start md:self-auto">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
                 <button
                   onClick={loadSavedQuotations}
                   disabled={isLoadingSavedQuotations}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 sm:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap"
                   title="Reload quotations list"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSavedQuotations ? 'animate-spin text-indigo-600' : ''}`} />
                   {isLoadingSavedQuotations ? 'Syncing...' : 'Refresh List'}
-                </button>
-                <button
-                  onClick={() => setActiveTab('builder')}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  New Quotation
                 </button>
               </div>
             </div>
@@ -2467,10 +3041,10 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 />
               </div>
 
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold self-start sm:self-auto">
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto overflow-x-auto">
                 <button
                   onClick={() => setSavedStatusFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'all'
+                  className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${savedStatusFilter === 'all'
                       ? 'bg-white text-slate-900 shadow-xs font-bold'
                       : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -2479,7 +3053,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 </button>
                 <button
                   onClick={() => setSavedStatusFilter('CONFIRMED')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'CONFIRMED'
+                  className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${savedStatusFilter === 'CONFIRMED'
                       ? 'bg-white text-emerald-700 shadow-xs font-bold'
                       : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -2488,7 +3062,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 </button>
                 <button
                   onClick={() => setSavedStatusFilter('PENDING')}
-                  className={`px-3 py-1.5 rounded-lg transition-all ${savedStatusFilter === 'PENDING'
+                  className={`flex-1 sm:flex-none text-center px-3 py-1.5 rounded-lg transition-all whitespace-nowrap ${savedStatusFilter === 'PENDING'
                       ? 'bg-white text-amber-700 shadow-xs font-bold'
                       : 'text-slate-600 hover:text-slate-900'
                     }`}
@@ -2608,20 +3182,21 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                     </div>
 
                     {/* Right side: Amount & Action Buttons */}
-                    <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100">
-                      <div className="text-left lg:text-right">
+                    <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100 w-full lg:w-auto">
+                      <div className="text-left lg:text-right w-full sm:w-auto">
                         <div className="text-[11px] text-slate-400 font-medium">Grand Total (Incl. GST)</div>
                         <div className="text-xl font-bold font-mono text-indigo-700">
                           ₹{Number(q.grand_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      {/* Action Buttons: Stacked one after the other on mobile, row on desktop */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                         {isConfirmed ? (
                           <>
-                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              Order Confirmed (Locked)
+                            <span className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 whitespace-nowrap">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <span>Order Confirmed (Locked)</span>
                             </span>
 
                             {/* View Letterhead Preview Button */}
@@ -2630,11 +3205,11 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                                 handleLoadQuotation(q);
                                 setActiveTab('preview');
                               }}
-                              className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-all cursor-pointer shadow-2xs"
+                              className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
                               title="View quotation letterhead & export"
                             >
-                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                              View Quotation
+                              <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <span>View Quotation</span>
                             </button>
                           </>
                         ) : (
@@ -2642,22 +3217,22 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                             {/* Load & Edit Button */}
                             <button
                               onClick={() => handleLoadQuotation(q)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/80 transition-all cursor-pointer shadow-2xs"
+                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/80 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
                               title="Load this quotation into the builder to edit, change items, or re-calculate"
                             >
-                              <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
-                              Load & Edit
+                              <Edit3 className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <span>Load & Edit</span>
                             </button>
 
                             {/* Confirm Order Button */}
                             <button
                               onClick={() => handleInitiateConfirmOrder(q)}
                               disabled={isConfirmingOrder}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20"
+                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20 disabled:opacity-50 whitespace-nowrap"
                               title="Confirm order: permanently updates customer catalog pricing and adds old prices to Price History"
                             >
-                              <ShoppingBag className="w-3.5 h-3.5" />
-                              Confirm Order
+                              <ShoppingBag className="w-4 h-4 shrink-0" />
+                              <span>Confirm Order</span>
                             </button>
 
                             {/* Letterhead Preview Button */}
@@ -2666,11 +3241,11 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                                 handleLoadQuotation(q);
                                 setActiveTab('preview');
                               }}
-                              className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer"
+                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer whitespace-nowrap"
                               title="View on company letterhead"
                             >
-                              <Eye className="w-3.5 h-3.5 text-slate-500" />
-                              Preview
+                              <Eye className="w-4 h-4 text-slate-500 shrink-0" />
+                              <span>Preview</span>
                             </button>
                           </>
                         )}

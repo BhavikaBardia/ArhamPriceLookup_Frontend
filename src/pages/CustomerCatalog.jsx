@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { api } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { SearchableCustomerSelect, SearchableProductSelect } from '../components/ui/SearchableSelect';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/Dialog';
 import { PriceHistoryDrawer } from '../components/PriceHistoryDrawer';
 import { 
   Table, User, Search, RefreshCw, AlertCircle, History, Calendar, 
-  TrendingUp, TrendingDown, Check, ListFilter, Layers, Plus, CheckCircle2, PackagePlus, Pencil, X, FileText
+  TrendingUp, TrendingDown, Check, ListFilter, Layers, Plus, CheckCircle2, PackagePlus, Pencil, X, FileText, Lock
 } from 'lucide-react';
 
 export function CustomerCatalog({ onNavigateToQuotation }) {
+  const { isAdmin } = useAuth();
   const [customers, setCustomers] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
-  
+
   // In-memory cache for customer catalogs: { [cid]: customerProducts }
   const [catalogCache, setCatalogCache] = useState({});
   const [customerProducts, setCustomerProducts] = useState([]);
@@ -45,6 +47,7 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
   const [showProdSuggestions, setShowProdSuggestions] = useState(false);
 
   const startInlineEdit = (product) => {
+    if (!isAdmin) return;
     setEditingProductId(product.product_id);
     const currentPrice = isProductPriced(product) ? String(product.price) : '';
     setInlinePriceInput(currentPrice);
@@ -193,7 +196,7 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
         const normMake = normalizeProductName(targetMake);
 
         // Check if exact product with same name and make already exists in catalog
-        const existingExact = allProducts.find(p => 
+        const existingExact = allProducts.find(p =>
           normalizeProductName(p.standard_name) === normName &&
           normalizeProductName(p.make) === normMake
         );
@@ -259,7 +262,7 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
 
       setShowProdSuggestions(false);
       setAddMessage({ type: 'success', text: `Price for "${targetProdName}" saved successfully!` });
-      
+
       setTimeout(() => {
         setIsAddModalOpen(false);
         setAddNewProdName('');
@@ -299,12 +302,12 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
   });
 
   const normalizePricing = (pr) => {
-    const rawPrice = pr.customer_price !== undefined && pr.customer_price !== null 
-      ? pr.customer_price 
+    const rawPrice = pr.customer_price !== undefined && pr.customer_price !== null
+      ? pr.customer_price
       : (pr.price !== undefined && pr.price !== null ? pr.price : pr['Customer Price']);
 
-    const rawPrev = pr.previous_price !== undefined && pr.previous_price !== null 
-      ? pr.previous_price 
+    const rawPrev = pr.previous_price !== undefined && pr.previous_price !== null
+      ? pr.previous_price
       : pr['Previous Price'];
 
     return {
@@ -379,7 +382,7 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
         newCache[cid] = safeProd.map(prod => {
           const pidKey = String(prod.product_id).trim().toUpperCase();
           const pr = custPricingMap[pidKey];
-          
+
           const rawPrice = pr ? (pr.customer_price !== undefined ? pr.customer_price : pr.price) : null;
           const cleanStr = rawPrice !== null && rawPrice !== undefined && rawPrice !== '' ? String(rawPrice).replace(/[^0-9\.]/g, '') : '';
           const numericPrice = cleanStr ? parseFloat(cleanStr) : NaN;
@@ -589,21 +592,23 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
               </button>
             )}
 
-            <button
-              onClick={() => {
-                setAddSelectedProdId('');
-                setAddNewProdName('');
-                setAddNewProdMake('');
-                setAddPrice('');
-                setAddMessage(null);
-                setIsAddModalOpen(true);
-              }}
-              disabled={!selectedCustomerId}
-              title="Add / Set Product Price"
-              className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center justify-center"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setAddSelectedProdId('');
+                  setAddNewProdName('');
+                  setAddNewProdMake('');
+                  setAddPrice('');
+                  setAddMessage(null);
+                  setIsAddModalOpen(true);
+                }}
+                disabled={!selectedCustomerId}
+                title="Add / Set Product Price (Admin)"
+                className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center justify-center"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            )}
 
             <button
               onClick={loadAllInitialData}
@@ -689,17 +694,15 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
           <div className="flex items-center gap-1.5 self-start sm:self-auto bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setStatusFilter('priced')}
-              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${
-                statusFilter === 'priced' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${statusFilter === 'priced' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Priced ({configuredCount})
             </button>
             <button
               onClick={() => setStatusFilter('unpriced')}
-              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${
-                statusFilter === 'unpriced' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-              }`}
+              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${statusFilter === 'unpriced' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
             >
               Unpriced ({customerProducts.length - configuredCount})
             </button>
@@ -723,116 +726,262 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
             <p className="text-xs text-slate-500">No {statusFilter} products match search query "{tableSearchQuery}"</p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-200/80">
-            <table className="w-full text-left text-xs border-collapse min-w-[500px]">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider font-semibold">
-                  <th className="py-3.5 px-5">Standard Product Name</th>
-                  <th className="py-3.5 px-5 w-48 text-right">Customer Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {filteredProducts.map((product) => (
-                  <tr key={product.product_id} className="hover:bg-indigo-50/40 transition-colors">
-                    {/* Standard Product Name & Make */}
-                    <td className="py-3.5 px-5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span 
+          <div className="rounded-xl border border-slate-200/80 overflow-hidden">
+            {/* MOBILE CARD VIEW (sm:hidden) - Completely eliminates horizontal scrolling */}
+            <div className="sm:hidden divide-y divide-slate-100 bg-white">
+              {filteredProducts.map((product) => {
+                const isPriced = isProductPriced(product);
+                const isEditing = editingProductId === product.product_id;
+
+                return (
+                  <div key={product.product_id} className="p-3.5 hover:bg-indigo-50/20 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Product Name & Make Tag */}
+                      <div className="flex-1 min-w-0">
+                        <div
                           onClick={() => setHistoryProduct(product)}
-                          className="font-bold text-slate-900 text-xs sm:text-sm hover:text-indigo-600 hover:underline cursor-pointer flex items-center gap-1.5 group"
+                          className="font-bold text-slate-900 text-xs xs:text-sm hover:text-indigo-600 transition-colors cursor-pointer flex items-center gap-1.5 leading-snug group"
                           title="Click product name to view full price revision history"
                         >
-                          {product.standard_name}
+                          <span className="break-words line-clamp-2">{product.standard_name}</span>
                           <History className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 transition-colors shrink-0" />
-                        </span>
+                        </div>
+
                         {product.make && (
-                          <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80">
-                            Make: {product.make}
-                          </span>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80">
+                              {product.make}
+                            </span>
+                          </div>
                         )}
                       </div>
-                    </td>
 
-                    {/* Customer Price Column with Inline Editing */}
-                    <td className="py-3.5 px-5 text-right font-bold text-sm sm:text-base text-emerald-700 tracking-tight font-mono">
-                      {editingProductId === product.product_id ? (
-                        <div className="flex items-center justify-end gap-1.5 font-sans" onClick={(e) => e.stopPropagation()}>
-                          <div className="relative w-28">
-                            <span className="absolute left-2.5 top-2 text-xs text-slate-400 font-mono">₹</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              autoFocus
-                              disabled={isSavingInline}
-                              value={inlinePriceInput}
-                              onChange={(e) => setInlinePriceInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  saveInlineEdit(product);
-                                } else if (e.key === 'Escape') {
-                                  cancelInlineEdit();
-                                }
-                              }}
-                              placeholder="0.00"
-                              className="w-full h-8 bg-white border border-indigo-400 rounded-lg pl-6 pr-2 py-1 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
-                            />
-                          </div>
-
-                          <button
-                            type="button"
-                            disabled={isSavingInline || !inlinePriceInput || parseFloat(inlinePriceInput) <= 0}
-                            onClick={() => saveInlineEdit(product)}
-                            title="Save price inline (Enter)"
-                            className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center transition-colors disabled:opacity-40 shadow-2xs cursor-pointer shrink-0"
-                          >
-                            {isSavingInline ? (
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      {/* Customer Price Column - Compact Button / Display when not editing */}
+                      {!isEditing && (
+                        <div className="shrink-0 text-right">
+                          {isPriced ? (
+                            isAdmin ? (
+                              <button
+                                type="button"
+                                onClick={() => startInlineEdit(product)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 border border-emerald-200 font-mono font-bold text-xs xs:text-sm transition-all cursor-pointer shadow-2xs"
+                                title="Tap to edit price inline (Admin)"
+                              >
+                                <span>₹{Number(String(product.price).replace(/[^0-9\.]/g, '')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                <Pencil className="w-3 h-3 text-emerald-600 shrink-0" />
+                              </button>
                             ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isSavingInline}
-                            onClick={cancelInlineEdit}
-                            title="Cancel inline editing (Esc)"
-                            className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors shadow-2xs cursor-pointer shrink-0"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="group flex items-center justify-end gap-2 font-mono">
-                          {isProductPriced(product) ? (
-                            <span 
-                              onClick={() => startInlineEdit(product)}
-                              className="cursor-pointer hover:text-indigo-600 transition-colors flex items-center gap-1.5"
-                              title="Click to edit price inline"
-                            >
-                              ₹{Number(String(product.price).replace(/[^0-9\.]/g, '')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              <Pencil className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 group-hover:text-indigo-600 transition-all shrink-0" />
-                            </span>
+                              <div className="inline-flex items-center px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold text-xs xs:text-sm shadow-2xs select-none">
+                                <span>₹{Number(String(product.price).replace(/[^0-9\.]/g, '')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              </div>
+                            )
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => startInlineEdit(product)}
-                              className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1 font-sans transition-all cursor-pointer shadow-2xs"
-                              title="Click to set price inline for this product"
-                            >
-                              <Plus className="w-3 h-3" />
-                              Set Price
-                            </button>
+                            isAdmin ? (
+                              <button
+                                type="button"
+                                onClick={() => startInlineEdit(product)}
+                                className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1 font-sans transition-all cursor-pointer shadow-2xs"
+                                title="Tap to set price inline for this product"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Set Price
+                              </button>
+                            ) : (
+                              <span className="text-[11px] font-medium px-2 py-1 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 inline-flex items-center gap-1 font-sans select-none">
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                Unconfigured
+                              </span>
+                            )
                           )}
                         </div>
                       )}
-                    </td>
+                    </div>
+
+                    {/* Inline Editor Form on Mobile */}
+                    {isEditing && (
+                      <div
+                        className="mt-2.5 pt-2.5 border-t border-slate-100 flex items-center gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="relative flex-1">
+                          <span className="absolute left-2.5 top-2 text-xs text-slate-400 font-mono">₹</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            autoFocus
+                            disabled={isSavingInline}
+                            value={inlinePriceInput}
+                            onChange={(e) => setInlinePriceInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                saveInlineEdit(product);
+                              } else if (e.key === 'Escape') {
+                                cancelInlineEdit();
+                              }
+                            }}
+                            placeholder="0.00"
+                            className="w-full h-9 bg-white border border-indigo-400 rounded-lg pl-6 pr-2 py-1 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isSavingInline || !inlinePriceInput || parseFloat(inlinePriceInput) <= 0}
+                          onClick={() => saveInlineEdit(product)}
+                          title="Save price (Enter)"
+                          className="h-9 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1 text-xs font-bold transition-colors disabled:opacity-40 shadow-2xs cursor-pointer shrink-0"
+                        >
+                          {isSavingInline ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4" />
+                          )}
+                          <span>Save</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isSavingInline}
+                          onClick={cancelInlineEdit}
+                          title="Cancel (Esc)"
+                          className="h-9 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors shadow-2xs cursor-pointer shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* DESKTOP TABLE VIEW (hidden sm:block) */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider font-semibold">
+                    <th className="py-3.5 px-5">Standard Product Name</th>
+                    <th className="py-3.5 px-5 w-52 text-right">Customer Price</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredProducts.map((product) => (
+                    <tr key={product.product_id} className="hover:bg-indigo-50/40 transition-colors">
+                      {/* Standard Product Name & Make */}
+                      <td className="py-3.5 px-5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            onClick={() => setHistoryProduct(product)}
+                            className="font-bold text-slate-900 text-xs sm:text-sm hover:text-indigo-600 hover:underline cursor-pointer flex items-center gap-1.5 group"
+                            title="Click product name to view full price revision history"
+                          >
+                            {product.standard_name}
+                            <History className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 transition-colors shrink-0" />
+                          </span>
+                          {product.make && (
+                            <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80">
+                              Make: {product.make}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Customer Price Column with Inline Editing */}
+                      <td className="py-3.5 px-5 text-right font-bold text-sm sm:text-base text-emerald-700 tracking-tight font-mono">
+                        {editingProductId === product.product_id ? (
+                          <div className="flex items-center justify-end gap-1.5 font-sans" onClick={(e) => e.stopPropagation()}>
+                            <div className="relative w-28">
+                              <span className="absolute left-2.5 top-2 text-xs text-slate-400 font-mono">₹</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                autoFocus
+                                disabled={isSavingInline}
+                                value={inlinePriceInput}
+                                onChange={(e) => setInlinePriceInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    saveInlineEdit(product);
+                                  } else if (e.key === 'Escape') {
+                                    cancelInlineEdit();
+                                  }
+                                }}
+                                placeholder="0.00"
+                                className="w-full h-8 bg-white border border-indigo-400 rounded-lg pl-6 pr-2 py-1 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={isSavingInline || !inlinePriceInput || parseFloat(inlinePriceInput) <= 0}
+                              onClick={() => saveInlineEdit(product)}
+                              title="Save price inline (Enter)"
+                              className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center transition-colors disabled:opacity-40 shadow-2xs cursor-pointer shrink-0"
+                            >
+                              {isSavingInline ? (
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-4 h-4" />
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={isSavingInline}
+                              onClick={cancelInlineEdit}
+                              title="Cancel inline editing (Esc)"
+                              className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors shadow-2xs cursor-pointer shrink-0"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="group flex items-center justify-end gap-2 font-mono">
+                            {isProductPriced(product) ? (
+                              isAdmin ? (
+                                <span
+                                  onClick={() => startInlineEdit(product)}
+                                  className="cursor-pointer hover:text-indigo-600 transition-colors flex items-center gap-1.5"
+                                  title="Click to edit price inline (Admin)"
+                                >
+                                  ₹{Number(String(product.price).replace(/[^0-9\.]/g, '')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  <Pencil className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 group-hover:text-indigo-600 transition-all shrink-0" />
+                                </span>
+                              ) : (
+                                <span className="select-none text-slate-800 font-semibold">
+                                  ₹{Number(String(product.price).replace(/[^0-9\.]/g, '')).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              )
+                            ) : (
+                              isAdmin ? (
+                                <button
+                                  type="button"
+                                  onClick={() => startInlineEdit(product)}
+                                  className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1 font-sans transition-all cursor-pointer shadow-2xs"
+                                  title="Click to set price inline for this product"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Set Price
+                                </button>
+                              ) : (
+                                <span className="text-[11px] font-medium px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 inline-flex items-center gap-1 font-sans select-none">
+                                  <Lock className="w-3 h-3 text-slate-400" />
+                                  Unconfigured
+                                </span>
+                              )
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -878,11 +1027,10 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
             {/* Scrollable Body */}
             <div className="p-6 overflow-y-auto flex-1 space-y-4">
               {addMessage && (
-                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                  addMessage.type === 'success' 
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-semibold' 
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${addMessage.type === 'success'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-semibold'
                     : 'bg-rose-50 border-rose-200 text-rose-800'
-                }`}>
+                  }`}>
                   {addMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
                   {addMessage.text}
                 </div>
@@ -894,18 +1042,16 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
                   <button
                     type="button"
                     onClick={() => { setAddMode('existing'); setAddMessage(null); }}
-                    className={`flex-1 py-2 rounded-lg transition-all ${
-                      addMode === 'existing' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 py-2 rounded-lg transition-all ${addMode === 'existing' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     Select Existing Product
                   </button>
                   <button
                     type="button"
                     onClick={() => { setAddMode('new'); setAddMessage(null); }}
-                    className={`flex-1 py-2 rounded-lg transition-all ${
-                      addMode === 'new' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    className={`flex-1 py-2 rounded-lg transition-all ${addMode === 'new' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                      }`}
                   >
                     + Create New Product
                   </button>
