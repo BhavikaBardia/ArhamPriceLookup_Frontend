@@ -944,7 +944,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     clone.style.boxShadow = 'none';
     clone.style.border = 'none';
     clone.style.margin = '0';
-    clone.style.padding = '40px';
+    clone.style.padding = '32px 24px 36px 24px';
     clone.style.backgroundColor = '#ffffff';
 
     stagingContainer.appendChild(clone);
@@ -1463,7 +1463,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     <div
       id="quotation-letterhead-paper"
       ref={previewPaperRef}
-      className="w-[794px] min-w-[794px] max-w-[794px] bg-white text-slate-900 p-10 shadow-2xl rounded-sm border border-slate-300 min-h-[1100px] flex flex-col justify-between"
+      className="w-[794px] min-w-[794px] max-w-[794px] bg-white text-slate-900 px-6 py-8 shadow-2xl rounded-sm border border-slate-300 min-h-[1100px] flex flex-col justify-between"
       style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
     >
       <div>
@@ -1515,42 +1515,53 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           )}
         </div>
 
-        {/* Items Table */}
+        {/* Items Table - Strict fixed layout with maximized 360px Item Description column */}
         <div className="mb-6">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-xs border-collapse table-fixed" style={{ tableLayout: 'fixed', width: '100%' }}>
+            <colgroup>
+              <col style={{ width: '26px' }} />
+              <col style={{ width: '310px' }} />
+              <col style={{ width: '52px' }} />
+              <col style={{ width: '36px' }} />
+              <col style={{ width: '36px' }} />
+              <col style={{ width: '96px' }} />
+              <col style={{ width: '42px' }} />
+              <col style={{ width: '98px' }} />
+              <col style={{ width: '50px' }} />
+            </colgroup>
             <thead>
               <tr className="border-y-2 border-slate-800 bg-slate-100 text-slate-800 font-bold uppercase text-[10px] tracking-wider">
-                <th className="py-2.5 px-2 w-8 text-center">#</th>
-                <th className="py-2.5 px-3">Item Description</th>
-                <th className="py-2.5 px-2 w-24">Make</th>
-                <th className="py-2.5 px-2 w-14 text-center">UOM</th>
-                <th className="py-2.5 px-2 w-14 text-center">Qty</th>
-                <th className="py-2.5 px-3 w-24 text-right">Rate</th>
-                <th className="py-2.5 px-2 w-16 text-center">Disc</th>
-                <th className="py-2.5 px-3 w-24 text-right">Amount</th>
-                <th className="py-2.5 px-3 w-28">Remark</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">#</th>
+                <th className="py-2 px-2 text-left whitespace-nowrap">Item Description</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">Make</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">UOM</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">Qty</th>
+                <th className="py-2 px-1.5 text-right whitespace-nowrap">Rate</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">Disc</th>
+                <th className="py-2 px-1.5 text-right whitespace-nowrap">Amount</th>
+                <th className="py-2 px-1 text-center whitespace-nowrap">Remark</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {items.map((item, idx) => (
                 <tr key={idx} className="hover:bg-slate-50/50">
-                  <td className="py-2.5 px-2 text-center text-slate-400 font-mono">{idx + 1}</td>
-                  <td className="py-2.5 px-3 font-bold text-slate-900">
+                  <td className="py-2.5 px-1 text-center text-slate-400 font-mono text-[11px] align-top">{idx + 1}</td>
+                  <td className="py-2.5 px-2 font-bold text-slate-900 text-[11px] leading-snug break-words align-top">
                     {item.product_name || 'Item'}
                   </td>
-                  <td className="py-2.5 px-2 font-medium text-slate-700">{item.make || '-'}</td>
-                  <td className="py-2.5 px-2 text-center font-bold text-slate-800">{item.uom || 'Nos'}</td>
-                  <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-900">{item.qty}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-900">
+                  <td className="py-2.5 px-1 text-center font-medium text-slate-700 text-[11px] leading-tight break-words align-top">{item.make || '-'}</td>
+                  <td className="py-2.5 px-1 text-center font-bold text-slate-800 text-[11px] align-top">{item.uom || 'Nos'}</td>
+                  <td className="py-2.5 px-1 text-center font-mono font-bold text-slate-900 text-[11px] align-top">{item.qty}</td>
+                  <td className="py-2.5 px-1.5 text-right font-mono text-slate-900 text-[11px] whitespace-nowrap align-top">
                     ₹{Number(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </td>
-                  <td className="py-2.5 px-2 text-center font-mono text-slate-600 text-[11px]">
+                  <td className="py-2.5 px-1 text-center font-mono text-slate-600 text-[10px] whitespace-nowrap align-top">
                     {parseFloat(item.discount_val) > 0 ? `${item.discount_val}${item.discount_type === 'fixed' ? '₹' : '%'}` : '-'}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                  <td className="py-2.5 px-1.5 text-right font-mono font-bold text-slate-900 text-[11px] whitespace-nowrap align-top">
                     ₹{Number(item.total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td className="py-2.5 px-3 text-slate-600 text-[11px] italic">
+                  <td className="py-2.5 px-1 text-center text-slate-600 text-[10px] italic leading-tight break-words align-top">
                     {item.remark || '-'}
                   </td>
                 </tr>
@@ -1559,38 +1570,38 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
             <tfoot className="border-t-2 border-slate-800 text-xs">
               {/* Subtotal Row - exactly below Amount column */}
               <tr className="font-bold bg-slate-50/70 border-b border-slate-200">
-                <td colSpan={7} className="py-2.5 px-3 text-right text-slate-700 font-bold uppercase text-[11px] tracking-wide">
+                <td colSpan={7} className="py-2 px-2 text-right text-slate-700 font-bold uppercase text-[11px] tracking-wide">
                   Subtotal:
                 </td>
-                <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                <td className="py-2 px-1.5 text-right font-mono font-bold text-slate-900 text-xs whitespace-nowrap">
                   ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
-                <td className="py-2.5 px-3"></td>
+                <td className="py-2 px-1"></td>
               </tr>
 
               {/* Quotation Discount if applied */}
               {discountAmount > 0 && (
                 <tr className="text-emerald-700 border-b border-slate-200">
-                  <td colSpan={7} className="py-2 px-3 text-right font-semibold text-[11px]">
+                  <td colSpan={7} className="py-1.5 px-2 text-right font-semibold text-[11px]">
                     Discount ({discountType === 'percent' ? `${discountValue}%` : 'Flat'}):
                   </td>
-                  <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
+                  <td className="py-1.5 px-1.5 text-right font-mono font-bold text-emerald-700 text-xs whitespace-nowrap">
                     -₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td className="py-2 px-3"></td>
+                  <td className="py-1.5 px-1"></td>
                 </tr>
               )}
 
               {/* Taxable Amount if discount was present */}
               {discountAmount > 0 && (
                 <tr className="text-slate-700 border-b border-slate-200 font-semibold">
-                  <td colSpan={7} className="py-2 px-3 text-right text-[11px]">
+                  <td colSpan={7} className="py-1.5 px-2 text-right text-[11px]">
                     Taxable Value:
                   </td>
-                  <td className="py-2 px-3 text-right font-mono text-slate-900">
+                  <td className="py-1.5 px-1.5 text-right font-mono text-slate-900 text-xs whitespace-nowrap">
                     ₹{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td className="py-2 px-3"></td>
+                  <td className="py-1.5 px-1"></td>
                 </tr>
               )}
 
@@ -1600,33 +1611,33 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   {taxDetails.isSplit ? (
                     <>
                       <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                        <td colSpan={7} className="py-1.5 px-3 text-right">
+                        <td colSpan={7} className="py-1.5 px-2 text-right">
                           CGST (9%):
                         </td>
-                        <td className="py-1.5 px-3 text-right font-mono">
+                        <td className="py-1.5 px-1.5 text-right font-mono text-xs whitespace-nowrap">
                           ₹{taxDetails.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
-                        <td className="py-1.5 px-3"></td>
+                        <td className="py-1.5 px-1"></td>
                       </tr>
                       <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                        <td colSpan={7} className="py-1.5 px-3 text-right">
+                        <td colSpan={7} className="py-1.5 px-2 text-right">
                           SGST (9%):
                         </td>
-                        <td className="py-1.5 px-3 text-right font-mono">
+                        <td className="py-1.5 px-1.5 text-right font-mono text-xs whitespace-nowrap">
                           ₹{taxDetails.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
-                        <td className="py-1.5 px-3"></td>
+                        <td className="py-1.5 px-1"></td>
                       </tr>
                     </>
                   ) : (
                     <tr className="text-slate-600 text-[11px] border-b border-slate-100">
-                      <td colSpan={7} className="py-1.5 px-3 text-right">
+                      <td colSpan={7} className="py-1.5 px-2 text-right">
                         {taxDetails.label}:
                       </td>
-                      <td className="py-1.5 px-3 text-right font-mono">
+                      <td className="py-1.5 px-1.5 text-right font-mono text-xs whitespace-nowrap">
                         ₹{taxDetails.totalTax.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
-                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-1"></td>
                     </tr>
                   )}
                 </>
@@ -1635,38 +1646,38 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
               {/* Freight Charges */}
               {parseFloat(freightCharges) > 0 && (
                 <tr className="text-slate-700 text-[11px] border-b border-slate-100 font-semibold">
-                  <td colSpan={7} className="py-1.5 px-3 text-right">
+                  <td colSpan={7} className="py-1.5 px-2 text-right">
                     Freight Charges:
                   </td>
-                  <td className="py-1.5 px-3 text-right font-mono text-slate-900 font-bold">
+                  <td className="py-1.5 px-1.5 text-right font-mono text-slate-900 font-bold text-xs whitespace-nowrap">
                     +₹{(parseFloat(freightCharges) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td className="py-1.5 px-3"></td>
+                  <td className="py-1.5 px-1"></td>
                 </tr>
               )}
 
               {/* Round off */}
               {Math.abs(roundOff) > 0.001 && (
                 <tr className="text-slate-500 text-[11px] border-b border-slate-100">
-                  <td colSpan={7} className="py-1.5 px-3 text-right">
+                  <td colSpan={7} className="py-1.5 px-2 text-right">
                     Round Off:
                   </td>
-                  <td className="py-1.5 px-3 text-right font-mono">
+                  <td className="py-1.5 px-1.5 text-right font-mono text-xs whitespace-nowrap">
                     {roundOff > 0 ? `+₹${roundOff.toFixed(2)}` : `-₹${Math.abs(roundOff).toFixed(2)}`}
                   </td>
-                  <td className="py-1.5 px-3"></td>
+                  <td className="py-1.5 px-1"></td>
                 </tr>
               )}
 
               {/* Grand Total */}
               <tr className="border-t-2 border-b-2 border-slate-900 bg-slate-100/90 text-slate-900 font-black">
-                <td colSpan={7} className="py-3 px-3 text-right font-bold text-xs uppercase tracking-wider text-slate-900">
+                <td colSpan={7} className="py-3 px-2 text-right font-bold text-xs uppercase tracking-wider text-slate-900">
                   GRAND TOTAL (INR):
                 </td>
-                <td className="py-3 px-3 text-right font-mono text-indigo-700 font-extrabold text-sm">
+                <td className="py-3 px-1.5 text-right font-mono text-indigo-700 font-extrabold text-sm whitespace-nowrap">
                   ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
-                <td className="py-3 px-3"></td>
+                <td className="py-3 px-1"></td>
               </tr>
             </tfoot>
           </table>
