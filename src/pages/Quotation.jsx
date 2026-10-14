@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
-import { SearchableCustomerSelect, SearchableProductSelect } from '../components/ui/SearchableSelect';
+import { SearchableCustomerSelect, SearchableProductSelect, UomSelect } from '../components/ui/SearchableSelect';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -16,7 +16,7 @@ import {
 
 // Common Indian UOMs (Units of Measure)
 const COMMON_UOMS = [
-  'Nos', 'Pcs', 'Mtr', 'Set', 'Kg', 'Box', 'Pkt', 'Roll', 'Ltr', 'Sq.Mtr', 'Drum', 'Pair', 'Bundle'
+  'Kg', 'Mtr', 'Inc', 'Nos', 'Pcs', 'Set', 'Box', 'Pkt', 'Roll', 'Ltr', 'Sq.Mtr', 'Drum', 'Pair', 'Bundle'
 ];
 
 // Helper: Convert numbers to Indian Rupees in words
@@ -85,28 +85,17 @@ function computeItemDiscountedRate(item, quotationContext = null) {
 
   let effectiveRate = rawRate;
 
-  // 1. If explicit discounted_rate is provided and valid
-  if (item.discounted_rate !== undefined && item.discounted_rate !== null && Number(item.discounted_rate) > 0 && Number(item.discounted_rate) < rawRate) {
-    effectiveRate = Number(item.discounted_rate);
-  } else {
-    // 2. Item-level discount (percentage or flat)
-    const dVal = parseFloat(item.discount_val !== undefined && item.discount_val !== '' ? item.discount_val : (item.discount !== undefined ? item.discount : 0)) || 0;
-    if (dVal > 0) {
-      if (item.discount_type === 'fixed') {
-        effectiveRate = Math.max(0, rawRate - dVal);
-      } else {
-        effectiveRate = Math.max(0, rawRate - (rawRate * dVal) / 100);
-      }
-    } else if (item.total && item.qty && Number(item.qty) > 0) {
-      // 3. Fallback: derive from total and qty
-      const impliedRate = Number(item.total) / Number(item.qty);
-      if (impliedRate > 0 && impliedRate < rawRate) {
-        effectiveRate = impliedRate;
-      }
+  // 1. Item-level discount (percentage or flat)
+  const dVal = parseFloat(item.discount_val !== undefined && item.discount_val !== '' ? item.discount_val : (item.discount !== undefined ? item.discount : 0)) || 0;
+  if (dVal > 0) {
+    if (item.discount_type === 'fixed') {
+      effectiveRate = Math.max(0, rawRate - dVal);
+    } else {
+      effectiveRate = Math.max(0, rawRate - (rawRate * dVal) / 100);
     }
   }
 
-  // 4. Quotation-level discount context (if quotation has an overall discount)
+  // 2. Quotation-level discount context (if quotation has an overall discount)
   if (quotationContext) {
     const subtotal = Number(quotationContext.subtotal) || 0;
     const discountAmount = Number(
@@ -117,7 +106,7 @@ function computeItemDiscountedRate(item, quotationContext = null) {
 
     if (discountAmount > 0 && subtotal > 0) {
       const qDiscFraction = Math.min(1, Math.max(0, discountAmount / subtotal));
-      const hasItemDiscount = (parseFloat(item.discount_val) > 0) || (item.discounted_rate && Number(item.discounted_rate) < rawRate);
+      const hasItemDiscount = dVal > 0;
       if (!hasItemDiscount) {
         effectiveRate = Math.max(0, effectiveRate * (1 - qDiscFraction));
       }
@@ -223,6 +212,12 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   const [currentOrderStatus, setCurrentOrderStatus] = useState(null);
   const [currentConfirmedAt, setCurrentConfirmedAt] = useState(null);
   const isOrderConfirmed = currentOrderStatus === 'CONFIRMED';
+  
+  // Flag indicating if current builder is editing an existing saved quotation
+  const isEditingExisting = useMemo(() => {
+    if (!quotationNo) return false;
+    return (savedQuotations || []).some(sq => String(sq.quotation_no || '').trim().toUpperCase() === String(quotationNo || '').trim().toUpperCase());
+  }, [savedQuotations, quotationNo]);
  
   // Mobile Export Dropdown States
   const [mobileExportOpen, setMobileExportOpen] = useState(false);
@@ -657,8 +652,9 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         rate: autoRate !== '' ? autoRate : (cur.rate || ''),
         isCustomPrice: isCatalogPrice
       };
+      delete updatedItem.discounted_rate;
       const effectiveRate = computeItemDiscountedRate(updatedItem);
-      updatedItem.total = qty * effectiveRate;
+      updatedItem.total = Math.round(qty * effectiveRate * 100) / 100;
       next[index] = updatedItem;
       return next;
     });
@@ -670,9 +666,16 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       const next = [...prevItems];
       const item = { ...next[index], [field]: value };
 
+      if (field === 'rate' || field === 'discount_val' || field === 'discount_type') {
+        delete item.discounted_rate;
+        if (field === 'rate') {
+          item.isCustomPrice = false;
+        }
+      }
+
       const q = parseFloat(field === 'qty' ? value : item.qty) || 0;
       const effectiveRate = computeItemDiscountedRate(item);
-      item.total = q * effectiveRate;
+      item.total = Math.round(q * effectiveRate * 100) / 100;
 
       next[index] = item;
       return next;
@@ -1127,7 +1130,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       await loadSavedQuotations();
       setExportMessage({
         type: 'success',
-        text: `✓ Quotation ${quotationNo} saved successfully at ${timeStr}!`
+        text: `✓ Quotation ${quotationNo} ${isEditingExisting ? 'updated' : 'saved'} successfully at ${timeStr}!`
       });
       setTimeout(() => setExportMessage(null), 5000);
     } catch (err) {
@@ -1192,8 +1195,12 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     if (Array.isArray(q.items) && q.items.length > 0) {
       const loadedItems = q.items.map((it, idx) => {
         const r = it.rate !== undefined && it.rate !== '' ? Number(it.rate) : '';
-        const dVal = it.discount_val !== undefined && it.discount_val !== '' ? Number(it.discount_val) : (it.discount !== undefined ? Number(it.discount) : '');
-        const dType = it.discount_type || 'percent';
+        let dVal = it.discount_val !== undefined && it.discount_val !== '' ? Number(it.discount_val) : (it.discount !== undefined ? Number(it.discount) : '');
+        let dType = it.discount_type || 'percent';
+        if ((!dVal || Number(dVal) <= 0) && it.discounted_rate && Number(it.discounted_rate) > 0 && Number(it.discounted_rate) < r) {
+          dVal = Math.round((r - Number(it.discounted_rate)) * 100) / 100;
+          dType = 'fixed';
+        }
         const loadedItem = {
           id: Date.now() + idx,
           product_id: it.product_id || '',
@@ -1210,7 +1217,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         };
         const eff = computeItemDiscountedRate(loadedItem);
         if (!loadedItem.total && r && it.qty) {
-          loadedItem.total = Number(it.qty) * eff;
+          loadedItem.total = Math.round(Number(it.qty) * eff * 100) / 100;
         }
         return loadedItem;
       });
@@ -2031,7 +2038,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   ) : (
                     <Save className="w-3.5 h-3.5" />
                   )}
-                  {isSaving ? 'Saving...' : 'Save Quotation'}
+                  {isSaving ? 'Saving...' : (isEditingExisting ? 'Update Quotation' : 'Save Quotation')}
                 </button>
 
                 {/* Confirm Order Button */}
@@ -2197,7 +2204,15 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                     <Hash className="w-3.5 h-3.5 text-slate-400" />
                     Quotation Number
                   </label>
-                  <span className="text-[10px] text-slate-400 font-medium">Auto-generated</span>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    {isEditingExisting ? (
+                      <span className="text-amber-700 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-md font-bold">
+                        Editing Existing Quotation
+                      </span>
+                    ) : (
+                      'Auto-generated'
+                    )}
+                  </span>
                 </div>
                 <div>
                   <input
@@ -2290,7 +2305,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                     <th className="py-2.5 px-2.5 w-10 text-center">#</th>
                     <th className="py-2.5 px-2.5 w-64">Product / Standard Name *</th>
                     <th className="py-2.5 px-2.5 w-32">Make / Brand</th>
-                    <th className="py-2.5 px-2.5 w-20">UOM *</th>
+                    <th className="py-2.5 px-2.5 w-24 text-center">UOM *</th>
                     <th className="py-2.5 px-2.5 w-20">Qty *</th>
                     <th className="py-2.5 px-2.5 w-32">Unit Rate (₹) *</th>
                     <th className="py-2.5 px-2.5 w-28 text-center">Disc</th>
@@ -2335,23 +2350,13 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                       </td>
 
                       {/* UOM */}
-                      <td className="py-2 px-2.5 w-20">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            list={`uom-options-${idx}`}
-                            value={item.uom}
-                            onChange={(e) => updateItemField(idx, 'uom', e.target.value)}
-                            disabled={isOrderConfirmed}
-                            placeholder="Nos"
-                            className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-bold rounded-lg px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-                          />
-                          <datalist id={`uom-options-${idx}`}>
-                            {COMMON_UOMS.map(u => (
-                              <option key={u} value={u} />
-                            ))}
-                          </datalist>
-                        </div>
+                      <td className="py-2 px-2.5 w-24">
+                        <UomSelect
+                          value={item.uom}
+                          onValueChange={(val) => updateItemField(idx, 'uom', val)}
+                          options={COMMON_UOMS}
+                          disabled={isOrderConfirmed}
+                        />
                       </td>
 
                       {/* Quantity */}
@@ -2374,8 +2379,8 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                           <input
                             type="number"
                             min="0"
-                            step="0.01"
-                            value={item.rate}
+                            step="any"
+                            value={item.rate !== undefined && item.rate !== null ? item.rate : ''}
                             onChange={(e) => updateItemField(idx, 'rate', e.target.value)}
                             disabled={isOrderConfirmed}
                             placeholder="0.00"
@@ -2853,77 +2858,6 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
       {/* TAB 2: LETTERHEAD PREVIEW (Interactive Responsive View & PDF Target) */}
       <div className={`${activeTab === 'preview' ? 'block' : 'hidden'} space-y-4`}>
-        {/* Responsive Preview Controls Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-xs text-xs">
-          <div className="flex items-center gap-2 text-slate-700">
-            <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
-            <span className="font-bold text-slate-800 hidden sm:inline">A4 Letterhead Print Preview</span>
-            <span className="font-bold text-slate-800 sm:hidden">Letterhead</span>
-            <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200/80 text-[10px] font-semibold">
-              {previewScale < 1 && previewZoomMode === 'fit' ? `Fit (${Math.round(previewScale * 100)}%)` : '100% A4'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* View Mode Toggle: Fit to Screen vs 100% Zoom */}
-            {previewScale < 1 && (
-              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setPreviewZoomMode('fit')}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                    previewZoomMode === 'fit' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  title="Fit whole letterhead onto phone screen"
-                >
-                  Fit Screen
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewZoomMode('100')}
-                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
-                    previewZoomMode === '100' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                  title="View at 100% original scale (swipe horizontally)"
-                >
-                  100% Zoom
-                </button>
-              </div>
-            )}
-
-            {/* Quick Export PDF Button */}
-            <button
-              type="button"
-              onClick={handleExportPdf}
-              disabled={isExporting}
-              className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-              title="Download standard A4 PDF document"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>PDF</span>
-            </button>
-
-            {/* Print Button */}
-            <button
-              type="button"
-              onClick={handlePrint}
-              className="hidden xs:flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold border border-slate-200 transition-all cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Print</span>
-            </button>
-
-            {/* Back to Edit Button */}
-            <button
-              type="button"
-              onClick={() => setActiveTab('builder')}
-              className="text-indigo-600 font-bold hover:underline px-2 py-1 text-xs"
-            >
-              ← Edit
-            </button>
-          </div>
-        </div>
-
         {/* Paper Container (Styled for standard A4 document layout with dynamic responsive scaling) */}
         <div 
           ref={previewContainerRef}
