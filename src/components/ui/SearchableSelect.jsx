@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { ChevronDown, Search, Check, X, RefreshCw } from 'lucide-react';
+import { ChevronDown, Search, Check, X, RefreshCw, Plus } from 'lucide-react';
 
 // Fuzzy similarity score calculator
 function getFuzzyScore(query, target) {
@@ -186,7 +186,8 @@ export function SearchableProductSelect({
   isLoading = false,
   compact = false,
   className = "",
-  disabled = false
+  disabled = false,
+  onAddNewProduct = null
 }) {
   const [open, setOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
@@ -301,64 +302,121 @@ export function SearchableProductSelect({
             <span>
               {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} available
             </span>
-            <span className="text-[10px] text-slate-400">Click to select item</span>
+            {onAddNewProduct ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const q = filterQuery;
+                  setOpen(false);
+                  onAddNewProduct(q);
+                }}
+                className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200/60 transition-all"
+                title="Create a new product not in this list"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add New Product</span>
+              </button>
+            ) : (
+              <span className="text-[10px] text-slate-400">Click to select item</span>
+            )}
           </div>
 
           {/* Filtered Product List with Full Names */}
-          <div className="max-h-[360px] overflow-y-auto space-y-1.5 pr-1">
+          <div className="max-h-[340px] overflow-y-auto space-y-1.5 pr-1">
             {filteredProducts.length === 0 ? (
-              <div className="py-10 text-center space-y-1">
-                <p className="text-xs font-semibold text-slate-500">No products found</p>
-                <p className="text-[11px] text-slate-400">No match for "{filterQuery}". Try searching by make or generic name.</p>
+              <div className="py-8 text-center space-y-3 px-4">
+                <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                  <Search className="w-5 h-5 text-slate-400" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-700">No matching products found</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    "{filterQuery}" is not in your product catalog.
+                  </p>
+                </div>
+                {onAddNewProduct && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const q = filterQuery;
+                      setOpen(false);
+                      onAddNewProduct(q);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add "{filterQuery || 'New Product'}" to Catalog</span>
+                  </button>
+                )}
               </div>
             ) : (
-              filteredProducts.map((p) => {
-                const isSelected = p.product_id === value;
-                return (
-                  <button
-                    key={p.product_id}
-                    type="button"
-                    onClick={() => handleSelect(p.product_id)}
-                    className={`w-full text-left flex items-start justify-between p-3 rounded-xl text-xs transition-all cursor-pointer border ${
-                      isSelected
-                        ? 'bg-indigo-50/90 text-indigo-950 border-indigo-300 shadow-xs'
-                        : 'hover:bg-slate-50 text-slate-800 border-slate-100 hover:border-slate-200'
-                    }`}
-                  >
-                    <div className="flex-1 min-w-0 pr-3">
-                      {/* Full standard name - wraps completely, never truncated */}
-                      <div className="font-bold text-slate-900 text-xs leading-relaxed whitespace-normal break-words">
-                        {p.standard_name}
+              <>
+                {filteredProducts.map((p) => {
+                  const isSelected = p.product_id === value;
+                  return (
+                    <button
+                      key={p.product_id}
+                      type="button"
+                      onClick={() => handleSelect(p.product_id)}
+                      className={`w-full text-left flex items-start justify-between p-3 rounded-xl text-xs transition-all cursor-pointer border ${
+                        isSelected
+                          ? 'bg-indigo-50/90 text-indigo-950 border-indigo-300 shadow-xs'
+                          : 'hover:bg-slate-50 text-slate-800 border-slate-100 hover:border-slate-200'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0 pr-3">
+                        {/* Full standard name - wraps completely, never truncated */}
+                        <div className="font-bold text-slate-900 text-xs leading-relaxed whitespace-normal break-words">
+                          {p.standard_name}
+                        </div>
+
+                        {/* Detail badges */}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                          {p.product_id && (
+                            <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              {p.product_id}
+                            </span>
+                          )}
+                          {p.make && (
+                            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/80">
+                              Make: {p.make}
+                            </span>
+                          )}
+                          {p.price !== undefined && p.price !== null && !isNaN(p.price) && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono">
+                              Catalog Rate: ₹{Number(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Detail badges */}
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                        {p.product_id && (
-                          <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                            {p.product_id}
-                          </span>
-                        )}
-                        {p.make && (
-                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/80">
-                            Make: {p.make}
-                          </span>
-                        )}
-                        {p.price !== undefined && p.price !== null && !isNaN(p.price) && (
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono">
-                            Catalog Rate: ₹{Number(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                      {isSelected && (
+                        <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
 
-                    {isSelected && (
-                      <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-                        <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                      </div>
-                    )}
-                  </button>
-                );
-              })
+                {/* Bottom shortcut when searching */}
+                {onAddNewProduct && filterQuery.trim().length > 0 && (
+                  <div className="pt-2 mt-1 border-t border-slate-100 text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const q = filterQuery;
+                        setOpen(false);
+                        onAddNewProduct(q);
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-semibold flex items-center justify-center gap-1.5 border border-dashed border-slate-200 hover:border-indigo-200 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Not in list? Add <strong>"{filterQuery}"</strong> as a new product</span>
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </PopoverPrimitive.Content>
