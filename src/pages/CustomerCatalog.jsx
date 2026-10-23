@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { api } from '../api';
+import { api, getAppsScriptUrl, resetAppsScriptUrl, DEFAULT_APPS_SCRIPT_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { SearchableCustomerSelect, SearchableProductSelect } from '../components/ui/SearchableSelect';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/Dialog';
@@ -326,35 +326,50 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
     loadAllInitialData();
   }, []);
 
-  const loadAllInitialData = async () => {
+  // Automatically reload when anything is saved to Google Sheets from anywhere in the app
+  useEffect(() => {
+    const handleGSheetSaved = () => {
+      console.log('[CustomerCatalog] Google Sheets updated. Auto-reloading catalog...');
+      loadAllInitialData(true);
+    };
+    window.addEventListener('arham_gsheet_saved', handleGSheetSaved);
+    return () => window.removeEventListener('arham_gsheet_saved', handleGSheetSaved);
+  }, []);
+
+  const loadAllInitialData = async (force = false) => {
     setIsInitialLoading(true);
     setError('');
     try {
-      let bulkData;
+      let bulkData = null;
       try {
-        bulkData = await api.getAllData();
-      } catch (err) {
-        console.warn('getAllData failed or not available, falling back to individual calls:', err);
+        bulkData = await api.getAllData({ force });
+      } catch (bulkErr) {
+        console.warn('[CustomerCatalog] getAllData failed or returned error, falling back to individual calls:', bulkErr);
       }
 
       let custData = bulkData?.customers;
       let prodData = bulkData?.products;
       let pricingData = bulkData?.pricing;
 
-      if (!custData || !prodData || !pricingData) {
+      // If bulk data didn't return complete sets, fetch individually in parallel
+      if (!Array.isArray(custData) || custData.length === 0 || !Array.isArray(prodData) || prodData.length === 0) {
         const [cRes, pRes, prRes] = await Promise.all([
-          custData ? Promise.resolve(custData) : api.getCustomers(),
-          prodData ? Promise.resolve(prodData) : api.getProducts(),
-          pricingData ? Promise.resolve(pricingData) : api.getAllPricing().catch(() => [])
+          (Array.isArray(custData) && custData.length > 0) ? Promise.resolve(custData) : api.getCustomers({ force }),
+          (Array.isArray(prodData) && prodData.length > 0) ? Promise.resolve(prodData) : api.getProducts({ force }),
+          (Array.isArray(pricingData) && pricingData.length > 0) ? Promise.resolve(pricingData) : api.getAllPricing({ force }).catch(() => [])
         ]);
-        custData = cRes;
-        prodData = pRes;
-        pricingData = prRes;
+        if (!Array.isArray(custData) || custData.length === 0) custData = cRes;
+        if (!Array.isArray(prodData) || prodData.length === 0) prodData = pRes;
+        if (!Array.isArray(pricingData) || pricingData.length === 0) pricingData = prRes;
       }
 
       const safeCust = Array.isArray(custData) ? custData.map(normalizeCustomer) : [];
       const safeProd = Array.isArray(prodData) ? prodData.map(normalizeProduct) : [];
       const safePricing = Array.isArray(pricingData) ? pricingData.map(normalizePricing) : [];
+
+      if (safeCust.length === 0 && safeProd.length === 0) {
+        throw new Error('No customer or product data received from Google Sheets. Please check your connection or Apps Script URL.');
+      }
 
       setCustomers(safeCust);
       setAllProducts(safeProd);
@@ -566,29 +581,29 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
   }, [customerProducts]);
 
   return (
-    <div className="space-y-6 pb-16">
+    <div className="space-y-4 sm:space-y-6 pb-16">
       {/* Top Banner Card */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+      <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-xs sm:shadow-sm space-y-3 sm:space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 pb-2.5 sm:pb-4 border-b border-slate-100">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <Table className="w-6 h-6 text-indigo-600 shrink-0" />
-              Customer Price Catalog
+            <h1 className="text-base sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-1.5 sm:gap-2">
+              <Table className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 shrink-0" />
+              <span>Customer Price Catalog</span>
             </h1>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1 leading-snug">
               Select a customer to view their product price list. Filter by Priced or Unpriced items, or click any product name to view price history.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div className="flex items-center gap-1.5 sm:gap-2 self-start sm:self-auto flex-wrap">
             {onNavigateToQuotation && selectedCustomerId && (
               <button
                 onClick={() => onNavigateToQuotation(selectedCustomerId)}
                 title="Create Quotation for this Customer"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg sm:rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-[11px] sm:text-xs font-bold transition-all shadow-2xs cursor-pointer"
               >
                 <FileText className="w-3.5 h-3.5" />
-                Create Quotation
+                <span>Create Quotation</span>
               </button>
             )}
 
@@ -604,19 +619,20 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
                 }}
                 disabled={!selectedCustomerId}
                 title="Add / Set Product Price (Admin)"
-                className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-xs disabled:opacity-50 cursor-pointer flex items-center justify-center"
+                className="p-1.5 sm:p-2 rounded-lg sm:rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-2xs disabled:opacity-50 cursor-pointer flex items-center justify-center"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               </button>
             )}
 
             <button
-              onClick={loadAllInitialData}
+              onClick={() => loadAllInitialData(true)}
               disabled={isInitialLoading || isLoadingCatalog}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-xs transition-all font-semibold disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-lg sm:rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-slate-100 text-[11px] sm:text-xs transition-all font-semibold disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isInitialLoading || isLoadingCatalog ? 'animate-spin text-indigo-600' : ''}`} />
-              Refresh All Data
+              <span className="hidden sm:inline">Refresh All Data</span>
+              <span className="sm:hidden">Refresh</span>
             </button>
           </div>
         </div>
@@ -674,34 +690,60 @@ export function CustomerCatalog({ onNavigateToQuotation }) {
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          {error}
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 mt-0.5 sm:mt-0" />
+            <div>
+              <p className="font-semibold text-rose-900">{error}</p>
+              <p className="text-[11px] text-rose-600/90 mt-0.5">
+                Connected Web App: <code className="bg-rose-100 px-1.5 py-0.5 rounded text-[10px] break-all">{getAppsScriptUrl()}</code>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <button
+              onClick={() => {
+                resetAppsScriptUrl();
+                loadAllInitialData();
+              }}
+              className="px-3 py-1.5 bg-white hover:bg-rose-100/60 border border-rose-300 text-rose-700 rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs"
+            >
+              Reset to Default URL
+            </button>
+            <button
+              onClick={loadAllInitialData}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-xs flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Retry
+            </button>
+          </div>
         </div>
       )}
 
       {/* Main Catalog Products Table */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
+      <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 shadow-xs sm:shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2">
           <div>
-            <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
-              Catalog Products ({filteredProducts.length})
+            <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2">
+              <Table className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+              <span>Catalog Products ({filteredProducts.length})</span>
             </h2>
-            <p className="text-xs text-slate-500">Click any product name to view price revision history</p>
+            <p className="text-[11px] sm:text-xs text-slate-500">Click any product name to view price revision history</p>
           </div>
 
           {/* Priced vs Unpriced Filter Pills */}
-          <div className="flex items-center gap-1.5 self-start sm:self-auto bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+          <div className="flex items-center gap-1 self-stretch sm:self-auto bg-slate-100 p-1 rounded-lg sm:rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setStatusFilter('priced')}
-              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${statusFilter === 'priced' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`flex-1 sm:flex-none text-center px-2.5 sm:px-3.5 py-1 rounded-md sm:rounded-lg transition-all cursor-pointer ${statusFilter === 'priced' ? 'bg-white text-emerald-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               Priced ({configuredCount})
             </button>
             <button
               onClick={() => setStatusFilter('unpriced')}
-              className={`px-3.5 py-1 rounded-lg transition-all cursor-pointer ${statusFilter === 'unpriced' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+              className={`flex-1 sm:flex-none text-center px-2.5 sm:px-3.5 py-1 rounded-md sm:rounded-lg transition-all cursor-pointer ${statusFilter === 'unpriced' ? 'bg-white text-amber-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 }`}
             >
               Unpriced ({customerProducts.length - configuredCount})

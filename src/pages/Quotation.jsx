@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { api } from '../api';
+import { api, getAppsScriptUrl, resetAppsScriptUrl } from '../api';
 import { SearchableCustomerSelect, SearchableProductSelect, UomSelect } from '../components/ui/SearchableSelect';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
@@ -10,7 +10,7 @@ import {
   Sparkles, User, Tag, Calendar, Hash, Percent, DollarSign,
   CheckCircle2, AlertCircle, RefreshCw, Eye, Edit3, Image, FileSpreadsheet,
   Building2, Phone, Mail, MapPin, Copy, Layers, Save,
-  ShoppingBag, Check, Search, History, Clock, ArrowRight, CheckCircle, ChevronDown,
+  ShoppingBag, Check, Search, History, Clock, ArrowRight, ArrowLeft, CheckCircle, ChevronDown,
   Truck, Globe, PackagePlus, PlusCircle, X
 } from 'lucide-react';
 
@@ -85,8 +85,13 @@ function computeItemDiscountedRate(item, quotationContext = null) {
 
   let effectiveRate = rawRate;
 
-  // 1. Item-level discount (percentage or flat)
-  const dVal = parseFloat(item.discount_val !== undefined && item.discount_val !== '' ? item.discount_val : (item.discount !== undefined ? item.discount : 0)) || 0;
+  // 1. Item-level discount (percentage or flat) directly from item discount fields
+  let dVal = 0;
+  const rawD = item.discount_val !== undefined && item.discount_val !== '' ? item.discount_val : (item.discount !== undefined ? item.discount : 0);
+  const parsedD = parseFloat(rawD);
+  if (!isNaN(parsedD) && parsedD > 0 && parsedD < 100000000) {
+    dVal = parsedD;
+  }
   if (dVal > 0) {
     if (item.discount_type === 'fixed') {
       effectiveRate = Math.max(0, rawRate - dVal);
@@ -106,7 +111,7 @@ function computeItemDiscountedRate(item, quotationContext = null) {
 
     if (discountAmount > 0 && subtotal > 0) {
       const qDiscFraction = Math.min(1, Math.max(0, discountAmount / subtotal));
-      const hasItemDiscount = dVal > 0;
+      const hasItemDiscount = dVal > 0 || (effectiveRate < rawRate - 0.01);
       if (!hasItemDiscount) {
         effectiveRate = Math.max(0, effectiveRate * (1 - qDiscFraction));
       }
@@ -197,10 +202,21 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
   // View mode: 'builder', 'preview', or 'saved'
   const [activeTab, setActiveTab] = useState('builder');
+  const [isEditingSaved, setIsEditingSaved] = useState(false);
+  const [previewReturnTab, setPreviewReturnTab] = useState('builder'); // 'builder' or 'saved'
   const [isExporting, setIsExporting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSavedTime, setLastSavedTime] = useState(null);
   const [exportMessage, setExportMessage] = useState(null);
+
+  // Cancel editing saved quotation and return to Saved list
+  const handleCancelEdit = () => {
+    setIsEditingSaved(false);
+    setActiveTab('saved');
+    if (savedQuotations.length === 0) {
+      loadSavedQuotations(false);
+    }
+  };
 
   // Saved Quotations & Order Confirmation States
   const [savedQuotations, setSavedQuotations] = useState([]);
@@ -208,6 +224,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   const [savedSearchQuery, setSavedSearchQuery] = useState('');
   const [savedStatusFilter, setSavedStatusFilter] = useState('all'); // 'all', 'CONFIRMED', 'PENDING'
   const [confirmOrderModal, setConfirmOrderModal] = useState(null);
+  const [saveSuccessModal, setSaveSuccessModal] = useState(null);
   const [isConfirmingOrder, setIsConfirmingOrder] = useState(false);
   const [currentOrderStatus, setCurrentOrderStatus] = useState(null);
   const [currentConfirmedAt, setCurrentConfirmedAt] = useState(null);
@@ -371,6 +388,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
   // Start a fresh, unique quotation (clears builder & generates new unique Quotation No)
   const handleNewQuotation = () => {
+    setIsEditingSaved(false);
     const newNo = generateUniqueQuotationNo(savedQuotations);
     setQuotationNo(newNo);
     setSelectedCustomerId('');
@@ -523,32 +541,37 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     loadData();
   }, []);
 
-  const loadData = async () => {
+  // Automatically reload when anything is saved to Google Sheets from anywhere in the app
+  useEffect(() => {
+    const handleGSheetSaved = () => {
+      console.log('[Quotation] Google Sheets updated. Auto-reloading data & quotations...');
+      loadData(true);
+      loadSavedQuotations(true);
+    };
+    window.addEventListener('arham_gsheet_saved', handleGSheetSaved);
+    return () => window.removeEventListener('arham_gsheet_saved', handleGSheetSaved);
+  }, []);
+
+  const loadData = async (force = false) => {
     setIsInitialLoading(true);
     setLoadError('');
     try {
       let bulkData = null;
       try {
-        bulkData = await api.getAllData();
+        bulkData = await api.getAllData({ force });
       } catch (bulkErr) {
-        console.warn('getAllData failed in Quotation, falling back to individual calls:', bulkErr);
+        console.warn('[Quotation] getAllData failed, falling back to individual calls:', bulkErr);
       }
 
       let cData = bulkData?.customers;
       let pData = bulkData?.products;
       let prData = bulkData?.pricing;
 
-      // If bulkData didn't return valid customer or product arrays, fetch individually
+      // If bulk data was incomplete, fetch customers and products
       if (!Array.isArray(cData) || cData.length === 0 || !Array.isArray(pData) || pData.length === 0) {
         const [cRes, pRes] = await Promise.all([
-          (Array.isArray(cData) && cData.length > 0) ? Promise.resolve(cData) : api.getCustomers().catch(err => {
-            console.error('api.getCustomers failed:', err);
-            return [];
-          }),
-          (Array.isArray(pData) && pData.length > 0) ? Promise.resolve(pData) : api.getProducts().catch(err => {
-            console.error('api.getProducts failed:', err);
-            return [];
-          })
+          (Array.isArray(cData) && cData.length > 0) ? Promise.resolve(cData) : api.getCustomers({ force }),
+          (Array.isArray(pData) && pData.length > 0) ? Promise.resolve(pData) : api.getProducts({ force })
         ]);
         if (!Array.isArray(cData) || cData.length === 0) cData = cRes;
         if (!Array.isArray(pData) || pData.length === 0) pData = pRes;
@@ -570,6 +593,10 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         .map(normalizeProduct)
         .filter(p => p && (p.product_id || p.standard_name));
 
+      if (safeC.length === 0 && safeP.length === 0) {
+        throw new Error('No customer or product records found from Google Sheets.');
+      }
+
       setCustomers(safeC);
       setProducts(safeP);
 
@@ -583,6 +610,9 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
       } else if (safeC.length > 0) {
         setSelectedCustomerId(prev => prev || safeC[0].customer_id);
       }
+
+      // Pre-fetch saved quotations in background so switching to Tab 3 is instant
+      loadSavedQuotations(false);
     } catch (err) {
       console.error('Failed to load customers/products in Quotation:', err);
       setLoadError('Failed to load customer list. Please click Refresh to try again.');
@@ -1258,6 +1288,16 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         text: `✓ Quotation ${quotationNo} ${isEditingExisting ? 'updated' : 'saved'} successfully at ${timeStr}!`
       });
       setTimeout(() => setExportMessage(null), 5000);
+
+      // Trigger Saved Successfully Popup Modal
+      setSaveSuccessModal({
+        quotation_no: quotationNo,
+        customer_name: selectedCustomer?.customer_name || 'Valued Customer',
+        grand_total: grandTotal,
+        items_count: items.length,
+        is_update: isEditingExisting,
+        saved_at: timeStr
+      });
     } catch (err) {
       console.error('Failed to save quotation:', err);
       setExportMessage({
@@ -1270,10 +1310,13 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   };
 
   // Load all saved quotations from Google Sheets / API
-  const loadSavedQuotations = async () => {
-    setIsLoadingSavedQuotations(true);
+  const loadSavedQuotations = async (force = false) => {
+    // Only display full loading screen if we don't have any cached quotations yet
+    if (savedQuotations.length === 0) {
+      setIsLoadingSavedQuotations(true);
+    }
     try {
-      const data = await api.getQuotations();
+      const data = await api.getQuotations({ force });
       if (Array.isArray(data)) {
         const sorted = [...data].sort((a, b) => {
           const tA = new Date(a.saved_at || a.quotation_date || 0).getTime();
@@ -1320,12 +1363,42 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
     if (Array.isArray(q.items) && q.items.length > 0) {
       const loadedItems = q.items.map((it, idx) => {
         const r = it.rate !== undefined && it.rate !== '' ? Number(it.rate) : '';
-        let dVal = it.discount_val !== undefined && it.discount_val !== '' ? Number(it.discount_val) : (it.discount !== undefined ? Number(it.discount) : '');
-        let dType = it.discount_type || 'percent';
-        if ((!dVal || Number(dVal) <= 0) && it.discounted_rate && Number(it.discounted_rate) > 0 && Number(it.discounted_rate) < r) {
-          dVal = Math.round((r - Number(it.discounted_rate)) * 100) / 100;
-          dType = 'fixed';
+        let dVal = '';
+        const rawDVal = it.discount_val !== undefined && it.discount_val !== '' ? it.discount_val : it.discount;
+        if (rawDVal !== undefined && rawDVal !== '' && rawDVal !== null) {
+          const num = Number(rawDVal);
+          if (!isNaN(num) && num > 0 && num < 100000000) {
+            dVal = num;
+          } else if (typeof rawDVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(rawDVal.trim())) {
+            // Google Sheets date serial recovery
+            const epoch = new Date(1899, 11, 30);
+            const parsedD = new Date(rawDVal.trim());
+            if (!isNaN(parsedD.getTime())) {
+              const serial = Math.round((parsedD.getTime() - epoch.getTime()) / (24 * 60 * 60 * 1000));
+              if (serial > 0 && serial <= 100000) dVal = serial;
+            }
+          }
         }
+
+        const dType = (it.discount_type === 'fixed' || it.discount_type === 'flat' || it.discount_type === '₹') ? 'fixed' : 'percent';
+
+        // Fallback recovery: if dVal is missing but discounted_rate indicates a discount
+        if (!dVal && r > 0) {
+          let discRateNum = Number(it.discounted_rate);
+          if (typeof it.discounted_rate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(it.discounted_rate.trim())) {
+            const epoch = new Date(1899, 11, 30);
+            const parsedD = new Date(it.discounted_rate.trim());
+            if (!isNaN(parsedD.getTime())) {
+              discRateNum = Math.round((parsedD.getTime() - epoch.getTime()) / (24 * 60 * 60 * 1000));
+            }
+          }
+          if (!isNaN(discRateNum) && discRateNum > 0 && discRateNum < r && discRateNum < 100000000) {
+            const diff = r - discRateNum;
+            const pct = Math.round(((diff / r) * 100) * 100) / 100;
+            dVal = dType === 'percent' ? pct : Math.round(diff * 100) / 100;
+          }
+        }
+
         const loadedItem = {
           id: Date.now() + idx,
           product_id: it.product_id || '',
@@ -1334,7 +1407,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           uom: it.uom || 'Nos',
           qty: Number(it.qty) || 1,
           rate: r,
-          discount_val: dVal,
+          discount_val: dVal > 0 ? dVal : '',
           discount_type: dType,
           total: Number(it.total) || 0,
           remark: it.remark || '',
@@ -1508,9 +1581,9 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
       // Reload fresh pricing data from backend/sheets & quotations
       try {
-        const freshData = await api.getAllData();
-        if (freshData?.pricing) {
-          setAllPricingCache(freshData.pricing);
+        const freshPricing = await api.getAllPricing();
+        if (Array.isArray(freshPricing)) {
+          setAllPricingCache(freshPricing);
         }
       } catch (err) {
         console.warn('Could not refresh all pricing data cache:', err);
@@ -1640,25 +1713,25 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           )}
         </div>
 
-        {/* Items Table - Strict fixed layout with maximized 102px Remark and 280px Item Description */}
+        {/* Items Table - Strict fixed layout with expanded 95px Make column */}
         <div className="mb-6">
           <table className="w-full text-left text-xs border-collapse table-fixed" style={{ tableLayout: 'fixed', width: '100%' }}>
             <colgroup>
               <col style={{ width: '26px' }} />
-              <col style={{ width: '280px' }} />
-              <col style={{ width: '50px' }} />
-              <col style={{ width: '35px' }} />
-              <col style={{ width: '35px' }} />
-              <col style={{ width: '92px' }} />
-              <col style={{ width: '40px' }} />
-              <col style={{ width: '94px' }} />
-              <col style={{ width: '102px' }} />
+              <col style={{ width: '245px' }} />
+              <col style={{ width: '95px' }} />
+              <col style={{ width: '34px' }} />
+              <col style={{ width: '34px' }} />
+              <col style={{ width: '86px' }} />
+              <col style={{ width: '38px' }} />
+              <col style={{ width: '98px' }} />
+              <col style={{ width: '98px' }} />
             </colgroup>
             <thead>
               <tr className="border-y-2 border-slate-800 bg-slate-100 text-slate-800 font-bold uppercase text-[10px] tracking-wider">
                 <th className="py-2 px-1 text-center whitespace-nowrap">#</th>
                 <th className="py-2 px-2 text-left whitespace-nowrap">Item Description</th>
-                <th className="py-2 px-1 text-center whitespace-nowrap">Make</th>
+                <th className="py-2 px-1.5 text-center whitespace-nowrap">Make</th>
                 <th className="py-2 px-1 text-center whitespace-nowrap">UOM</th>
                 <th className="py-2 px-1 text-center whitespace-nowrap">Qty</th>
                 <th className="py-2 px-1.5 text-right whitespace-nowrap">Rate</th>
@@ -1674,7 +1747,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   <td className="py-2.5 px-2 font-bold text-slate-900 text-[11px] leading-snug break-words align-top">
                     {item.product_name || 'Item'}
                   </td>
-                  <td className="py-2.5 px-1 text-center font-medium text-slate-700 text-[11px] leading-tight break-words align-top">{item.make || '-'}</td>
+                  <td className="py-2.5 px-1.5 text-center font-medium text-slate-700 text-[11px] leading-tight break-words align-top">{item.make || '-'}</td>
                   <td className="py-2.5 px-1 text-center font-bold text-slate-800 text-[11px] align-top">{item.uom || 'Nos'}</td>
                   <td className="py-2.5 px-1 text-center font-mono font-bold text-slate-900 text-[11px] align-top">{item.qty}</td>
                   <td className="py-2.5 px-1.5 text-right font-mono text-slate-900 text-[11px] whitespace-nowrap align-top">
@@ -1841,67 +1914,100 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
   );
 
   return (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-4 sm:space-y-6 pb-20">
       {/* Top Banner Header & Mode Navigation */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4 bg-white p-3.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200/80 shadow-2xs sm:shadow-xs">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <FileText className="w-6 h-6 text-indigo-600 shrink-0" />
-            Customer Quotation Generator
+          <h1 className="text-base sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-1.5 sm:gap-2">
+            <FileText className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 shrink-0" />
+            <span>Customer Quotation Generator</span>
           </h1>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1 leading-snug">
             Build itemized quotations with UOM, automated customer pricing, GST computation, and instant export to Excel, PDF, or Image.
           </p>
         </div>
 
-        {/* View Switcher: Builder vs Letterhead Preview vs Saved & New Quotation */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full lg:w-auto">
-          <button
-            type="button"
-            onClick={handleNewQuotation}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer whitespace-nowrap"
-            title="Create a fresh quotation and refresh form"
-          >
-            <Plus className="w-4 h-4 text-indigo-600 shrink-0" />
-            <span>New Quotation</span>
-          </button>
+        {/* Top Inner Menu: If editing a saved quotation show dedicated Edit Bar with Cancel & Preview; else show 2 tabs: New Quotation & Saved Quotations */}
+        {isEditingSaved ? (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 w-full lg:w-auto bg-indigo-50/90 border border-indigo-200/90 rounded-xl sm:rounded-2xl p-2 sm:px-4 sm:py-2.5 shadow-2xs animate-in fade-in">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Edit3 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-extrabold text-indigo-950">Editing Quotation:</span>
+                  <span className="font-mono text-xs font-extrabold text-indigo-700 bg-white px-2 py-0.5 rounded-lg border border-indigo-200 shadow-2xs">
+                    {quotationNo}
+                  </span>
+                </div>
+                <p className="text-[11px] text-indigo-700/90 font-medium truncate mt-0.5 max-w-[220px] sm:max-w-[280px]" title={selectedCustomer?.customer_name || 'Customer'}>
+                  Customer: <strong className="text-indigo-950">{selectedCustomer?.customer_name || 'Valued Customer'}</strong>
+                </p>
+              </div>
+            </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 self-end sm:self-center">
+              {/* Cancel Button: exits edit mode and returns straight to Saved Quotations */}
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                className="flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg sm:rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                title="Discard changes and return to Saved Quotations"
+              >
+                <X className="w-3.5 h-3.5 text-slate-500" />
+                <span>Cancel</span>
+              </button>
+
+              {/* Preview Button: opens Company Letterhead Preview */}
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewReturnTab('builder');
+                  setActiveTab('preview');
+                }}
+                className="flex items-center gap-1 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg sm:rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                title="Preview this quotation on company letterhead"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Preview</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Normal Inner Menu: ONLY 2 options - New Quotation & Saved Quotations */
+          <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-100 p-1 sm:p-1.5 rounded-lg sm:rounded-xl border border-slate-200 text-xs font-semibold w-full sm:w-auto">
             <button
-              onClick={() => setActiveTab('builder')}
-              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              type="button"
+              onClick={() => {
+                handleNewQuotation();
+                setActiveTab('builder');
+              }}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'builder'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Edit3 className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
-              <span>1. Edit & Configure</span>
+              <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-indigo-600 shrink-0" />
+              <span>New Quotation</span>
             </button>
             <button
-              onClick={() => setActiveTab('preview')}
-              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
-                activeTab === 'preview'
-                  ? 'bg-white text-indigo-700 shadow-xs font-bold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Eye className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
-              <span>2. Letterhead Preview</span>
-            </button>
-            <button
+              type="button"
               onClick={() => {
                 setActiveTab('saved');
-                loadSavedQuotations();
+                if (savedQuotations.length === 0) {
+                  loadSavedQuotations(false);
+                }
               }}
-              className={`w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 sm:py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === 'saved'
                   ? 'bg-white text-indigo-700 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Layers className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
-              <span>3. Saved Quotations</span>
+              <Layers className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-slate-500 shrink-0" />
+              <span>Saved Quotations</span>
               {savedQuotations.length > 0 && (
                 <span className="ml-1.5 px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold rounded-full shrink-0">
                   {savedQuotations.length}
@@ -1909,7 +2015,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
               )}
             </button>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Export Feedback Alert */}
@@ -1940,152 +2046,175 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         </div>
       )}
 
-      {/* Export Actions Sticky/Action Bar */}
-      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white p-3.5 sm:p-4 rounded-2xl shadow-md">
+      {/* Export Actions Sticky/Action Bar (Only shown in Builder & Preview, hidden in Saved Quotations) */}
+      {activeTab !== 'saved' && (
+        <div className="bg-gradient-to-r from-sky-100/90 via-emerald-100/80 to-amber-100/90 text-slate-800 p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl shadow-xs border border-emerald-200/80">
         {/* Mobile Layout (sm:hidden) */}
-        <div className="sm:hidden w-full flex flex-col gap-3">
+        <div className="sm:hidden w-full flex flex-col gap-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 shrink-0">
-                <Sparkles className="w-4 h-4" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-white/90 border border-sky-300/80 flex items-center justify-center text-sky-700 shadow-2xs shrink-0">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
               </div>
-              <div className="min-w-0">
-                <div className="text-[11px] text-indigo-200 font-medium flex items-center gap-1.5 flex-wrap leading-tight">
-                  <span>Grand Total (Incl. GST)</span>
-                  {lastSavedTime && (
-                    <span className="text-[9px] text-emerald-300 font-semibold bg-emerald-950/80 px-1.5 py-0.2 rounded-full border border-emerald-500/40">
-                      ✓ Saved
-                    </span>
-                  )}
-                  {currentOrderStatus === 'CONFIRMED' && (
-                    <span className="text-[9px] text-emerald-300 font-bold bg-emerald-900/90 px-1.5 py-0.2 rounded-full border border-emerald-400/50 flex items-center gap-0.5">
-                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
-                      Confirmed
-                    </span>
-                  )}
-                </div>
-                <div className="text-base font-bold font-mono tracking-tight text-white flex items-center gap-1">
-                  ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  <span className="text-[10px] text-slate-300 font-normal">({items.length} items)</span>
-                </div>
+              <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-bold text-slate-800">Quotation Actions</span>
+                {lastSavedTime && (
+                  <span className="text-[9px] text-emerald-800 font-bold bg-white/90 px-1.5 py-0.2 rounded-full border border-emerald-300 shadow-2xs">
+                    ✓ Saved
+                  </span>
+                )}
+                {currentOrderStatus === 'CONFIRMED' && (
+                  <span className="text-[9px] text-emerald-800 font-bold bg-white/90 px-1.5 py-0.2 rounded-full border border-emerald-300 shadow-2xs flex items-center gap-0.5">
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                    Confirmed
+                  </span>
+                )}
               </div>
             </div>
 
-            {/* Mobile Export Dropdown Trigger Button */}
-            <div className="relative shrink-0" ref={exportDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setMobileExportOpen(!mobileExportOpen)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-white rounded-xl text-xs font-bold border border-slate-700 shadow-sm cursor-pointer transition-all"
-                title="Export or download quotation in Excel, PDF, Image or Print"
-              >
-                <Download className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Export</span>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-300 transition-transform duration-200 ${mobileExportOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {/* Mobile Export Menu Popup */}
-              {mobileExportOpen && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200/90 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 mb-1">
-                    <span>Export Quotation</span>
-                    <span className="text-[9px] text-slate-400 font-normal">Select Format</span>
-                  </div>
-
-                  {/* Excel (.xlsx) */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileExportOpen(false);
-                      handleExportExcel();
-                    }}
-                    disabled={isExporting}
-                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 transition-colors cursor-pointer group"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 shrink-0">
-                      <FileSpreadsheet className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
-                        <span>Excel Spreadsheet</span>
-                        <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-100/60 px-1.5 py-0.2 rounded">.xlsx</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate">Formatted table with GST</div>
-                    </div>
-                  </button>
-
-                  {/* PDF Document (.pdf) */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileExportOpen(false);
-                      handleExportPdf();
-                    }}
-                    disabled={isExporting}
-                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-rose-50 text-slate-700 hover:text-rose-800 transition-colors cursor-pointer group mt-0.5"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600 group-hover:bg-rose-200 shrink-0">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
-                        <span>PDF Document</span>
-                        <span className="text-[10px] text-rose-600 font-semibold bg-rose-100/60 px-1.5 py-0.2 rounded">.pdf</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate">A4 Letterhead print format</div>
-                    </div>
-                  </button>
-
-                  {/* Image (.png) */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileExportOpen(false);
-                      handleExportImage();
-                    }}
-                    disabled={isExporting}
-                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-sky-50 text-slate-700 hover:text-sky-800 transition-colors cursor-pointer group mt-0.5"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-200 shrink-0">
-                      <Image className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold leading-tight flex items-center justify-between">
-                        <span>Image Export</span>
-                        <span className="text-[10px] text-sky-600 font-semibold bg-sky-100/60 px-1.5 py-0.2 rounded">.png</span>
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate">High-res for WhatsApp / share</div>
-                    </div>
-                  </button>
-
-                  {/* Print Document */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMobileExportOpen(false);
-                      handlePrint();
-                    }}
-                    className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition-colors cursor-pointer group mt-0.5"
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700 group-hover:bg-slate-200 shrink-0">
-                      <Printer className="w-4 h-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold leading-tight">Print Document</div>
-                      <div className="text-[10px] text-slate-400 truncate">Standard system print dialog</div>
-                    </div>
-                  </button>
-
-                </div>
+            {/* Mobile Header Right: Preview/Edit Toggle + Export Dropdown */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {activeTab === 'builder' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewReturnTab('builder');
+                    setActiveTab('preview');
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-2 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/90 shadow-2xs cursor-pointer transition-all"
+                  title="Preview quotation on company letterhead"
+                >
+                  <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Preview</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('builder')}
+                  className="flex items-center gap-1 px-2.5 py-2 bg-white hover:bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/90 shadow-2xs cursor-pointer transition-all"
+                  title="Back to Quotation Editor"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Edit</span>
+                </button>
               )}
+
+              {/* Mobile Export Dropdown Trigger Button */}
+              <div className="relative shrink-0" ref={exportDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setMobileExportOpen(!mobileExportOpen)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 rounded-xl text-xs font-bold border border-slate-300/90 shadow-2xs cursor-pointer transition-all"
+                  title="Export or download quotation in Excel, PDF, Image or Print"
+                >
+                  <Download className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Export</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${mobileExportOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {/* Mobile Export Menu Popup */}
+                {mobileExportOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200/90 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-100 mb-1">
+                      <span>Export Quotation</span>
+                      <span className="text-[9px] text-slate-400 font-normal">Select Format</span>
+                    </div>
+
+                    {/* Excel (.xlsx) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileExportOpen(false);
+                        handleExportExcel();
+                      }}
+                      disabled={isExporting}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 transition-colors cursor-pointer group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 shrink-0">
+                        <FileSpreadsheet className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                          <span>Excel Spreadsheet</span>
+                          <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-100/60 px-1.5 py-0.2 rounded">.xlsx</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate">Formatted table with GST</div>
+                      </div>
+                    </button>
+
+                    {/* PDF Document (.pdf) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileExportOpen(false);
+                        handleExportPdf();
+                      }}
+                      disabled={isExporting}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-rose-50 text-slate-700 hover:text-rose-800 transition-colors cursor-pointer group mt-0.5"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center text-rose-600 group-hover:bg-rose-200 shrink-0">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                          <span>PDF Document</span>
+                          <span className="text-[10px] text-rose-600 font-semibold bg-rose-100/60 px-1.5 py-0.2 rounded">.pdf</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate">A4 Letterhead print format</div>
+                      </div>
+                    </button>
+
+                    {/* Image (.png) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileExportOpen(false);
+                        handleExportImage();
+                      }}
+                      disabled={isExporting}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-sky-50 text-slate-700 hover:text-sky-800 transition-colors cursor-pointer group mt-0.5"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-sky-100 flex items-center justify-center text-sky-600 group-hover:bg-sky-200 shrink-0">
+                        <Image className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold leading-tight flex items-center justify-between">
+                          <span>Image Export</span>
+                          <span className="text-[10px] text-sky-600 font-semibold bg-sky-100/60 px-1.5 py-0.2 rounded">.png</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate">High-res for WhatsApp / share</div>
+                      </div>
+                    </button>
+
+                    {/* Print Document */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobileExportOpen(false);
+                        handlePrint();
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left rounded-xl hover:bg-slate-100 text-slate-700 hover:text-slate-900 transition-colors cursor-pointer group mt-0.5"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700 group-hover:bg-slate-200 shrink-0">
+                        <Printer className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold leading-tight">Print Document</div>
+                        <div className="text-[10px] text-slate-400 truncate">Standard system print dialog</div>
+                      </div>
+                    </button>
+
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Mobile Bottom Action Row */}
-          <div className="flex items-center gap-2 pt-2 border-t border-indigo-800/40">
+          <div className="flex items-center gap-2 pt-2 border-t border-emerald-200/70">
             {isOrderConfirmed ? (
-              <span className="w-full flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold truncate">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="w-full flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold truncate shadow-2xs">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                 <span className="truncate">Order Confirmed (Prices Locked)</span>
               </span>
             ) : (
@@ -2094,7 +2223,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   type="button"
                   onClick={handleSaveToSheets}
                   disabled={isSaving || isExporting}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                   title="Save quotation"
                 >
                   {isSaving ? (
@@ -2109,13 +2238,13 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   type="button"
                   onClick={() => handleInitiateConfirmOrder()}
                   disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                   title="Confirm order"
                 >
                   {isConfirmingOrder ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
                   ) : (
-                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <CheckCircle2 className="w-3.5 h-3.5" />
                   )}
                   <span>{isConfirmingOrder ? 'Confirming...' : 'Confirm'}</span>
                 </button>
@@ -2127,36 +2256,56 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
         {/* Desktop Layout (hidden sm:flex) */}
         <div className="hidden sm:flex flex-wrap items-center justify-between gap-4 w-full">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
-              <Sparkles className="w-4 h-4" />
+            <div className="w-9 h-9 rounded-xl bg-white/90 border border-sky-300/80 flex items-center justify-center text-sky-700 shadow-2xs">
+              <Sparkles className="w-4 h-4 text-amber-500 fill-amber-400" />
             </div>
-            <div>
-              <div className="text-xs text-indigo-200 font-medium flex items-center gap-2">
-                <span>Grand Total (Incl. GST)</span>
-                {lastSavedTime && (
-                  <span className="text-[10px] text-emerald-300 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-500/40">
-                    ✓ Saved ({lastSavedTime})
-                  </span>
-                )}
-                {currentOrderStatus === 'CONFIRMED' && (
-                  <span className="text-[10px] text-emerald-300 font-bold bg-emerald-900/90 px-2 py-0.5 rounded-full border border-emerald-400/50 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                    Order Confirmed
-                  </span>
-                )}
-              </div>
-              <div className="text-lg font-bold font-mono tracking-tight text-white flex items-center gap-1">
-                ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                <span className="text-[11px] text-slate-300 font-normal">({items.length} items)</span>
-              </div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-sm font-bold text-slate-800">Quotation Actions</span>
+              {lastSavedTime && (
+                <span className="text-[11px] text-emerald-800 font-bold bg-white/90 px-2.5 py-0.5 rounded-full border border-emerald-300 shadow-2xs">
+                  ✓ Saved ({lastSavedTime})
+                </span>
+              )}
+              {currentOrderStatus === 'CONFIRMED' && (
+                <span className="text-[11px] text-emerald-800 font-bold bg-white/90 px-2.5 py-0.5 rounded-full border border-emerald-300 shadow-2xs flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Order Confirmed
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Preview / Edit Toggle Button */}
+            {activeTab === 'builder' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewReturnTab('builder');
+                  setActiveTab('preview');
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200/90 rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                title="Preview quotation on company letterhead"
+              >
+                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Preview</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setActiveTab('builder')}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200/90 rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                title="Back to Quotation Editor"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Edit Quotation</span>
+              </button>
+            )}
+
             {isOrderConfirmed ? (
               <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/80 text-emerald-300 border border-emerald-400/50 rounded-xl text-xs font-bold">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="flex items-center gap-1.5 px-3 py-2 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold shadow-2xs">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                   Order Confirmed (Prices Locked)
                 </span>
               </div>
@@ -2166,7 +2315,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 <button
                   onClick={handleSaveToSheets}
                   disabled={isSaving || isExporting}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-900/30 transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                   title="Save this quotation and line items"
                 >
                   {isSaving ? (
@@ -2181,13 +2330,13 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 <button
                   onClick={() => handleInitiateConfirmOrder()}
                   disabled={isConfirmingOrder || isSaving || items.length === 0 || !selectedCustomerId}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-950/40 transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                   title="Confirm order: permanently updates customer pricing and preserves price history"
                 >
                   {isConfirmingOrder ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
                   ) : (
-                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <CheckCircle2 className="w-3.5 h-3.5" />
                   )}
                   {isConfirmingOrder ? 'Updating Prices...' : 'Confirm Order'}
                 </button>
@@ -2198,43 +2347,44 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
             <button
               onClick={handleExportExcel}
               disabled={isExporting}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-emerald-700 border border-emerald-200/90 rounded-xl text-xs font-bold shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
             >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Excel (.xlsx)
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Excel</span>
             </button>
 
             {/* PDF Export Button */}
             <button
               onClick={handleExportPdf}
               disabled={isExporting}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-rose-700 border border-rose-200/90 rounded-xl text-xs font-bold shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
             >
-              <FileText className="w-3.5 h-3.5" />
-              PDF Document
+              <FileText className="w-3.5 h-3.5 text-rose-600" />
+              <span>PDF</span>
             </button>
 
             {/* Image Export Button */}
             <button
               onClick={handleExportImage}
               disabled={isExporting}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-sky-700 border border-sky-200/90 rounded-xl text-xs font-bold shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
             >
-              <Image className="w-3.5 h-3.5" />
-              Image (.png)
+              <Image className="w-3.5 h-3.5 text-sky-600" />
+              <span>Image</span>
             </button>
 
             {/* Print Button */}
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 shadow-xs transition-all cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              Print
+              <span>Print</span>
             </button>
           </div>
         </div>
       </div>
+      )}
 
       {/* Export Progress Modal Overlay */}
       {isExporting && (
@@ -2277,12 +2427,12 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           )}
 
           {/* 1. Header Information Grid */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-100">
-              <User className="w-4 h-4 text-indigo-600" />
-              Customer & Quotation Details
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-2xs sm:shadow-xs space-y-3.5 sm:space-y-4">
+            <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2 pb-2.5 sm:pb-3 border-b border-slate-100">
+              <User className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Customer & Quotation Details</span>
               {isOrderConfirmed && (
-                <span className="ml-auto text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-md">
+                <span className="ml-auto text-[10px] sm:text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
                   Read Only
                 </span>
               )}
@@ -2315,10 +2465,37 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                   disabled={isOrderConfirmed}
                 />
                 {loadError && (
-                  <p className="text-[11px] text-rose-600 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3 shrink-0" />
-                    {loadError}
-                  </p>
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                      <div>
+                        <span>{loadError}</span>
+                        <span className="block text-[10px] text-rose-500 mt-0.5">
+                          URL: <code className="bg-rose-100/70 px-1 py-0.2 rounded font-mono">{getAppsScriptUrl()}</code>
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetAppsScriptUrl();
+                          loadData();
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 rounded-lg cursor-pointer"
+                      >
+                        Reset URL
+                      </button>
+                      <button
+                        type="button"
+                        onClick={loadData}
+                        className="px-2.5 py-1 text-[11px] font-semibold bg-rose-600 text-white hover:bg-rose-700 rounded-lg cursor-pointer flex items-center gap-1"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Retry
+                      </button>
+                    </div>
+                  </div>
                 )}
                 {selectedCustomer && (
                   <div className="text-[11px] text-slate-500 flex items-center gap-3 pt-1">
@@ -2395,14 +2572,14 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           </div>
 
           {/* 2. Interactive Line Items Table */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-2xs sm:shadow-xs space-y-3 sm:space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 pb-2.5 sm:pb-3 border-b border-slate-100">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Tag className="w-4 h-4 text-indigo-600" />
-                  Line Items & UOM Breakdown
+                <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2">
+                  <Tag className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Line Items & UOM Breakdown</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
                   Select customer priced products or enter custom rates and UOM.
                 </p>
               </div>
@@ -2483,15 +2660,16 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                         </div>
                       </td>
 
-                      {/* Make / Brand */}
+                      {/* Make / Brand (Non-editable) */}
                       <td className="py-2 px-2.5 w-32">
                         <input
                           type="text"
-                          value={item.make}
-                          onChange={(e) => updateItemField(idx, 'make', e.target.value)}
-                          disabled={isOrderConfirmed}
-                          placeholder="Make / Brand"
-                          className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-900 font-medium rounded-lg px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                          value={item.make || ''}
+                          readOnly
+                          disabled
+                          placeholder="—"
+                          title="Make / Brand is auto-populated and non-editable"
+                          className="w-full h-9 bg-slate-100/90 border border-slate-200 text-slate-600 font-medium rounded-lg px-2.5 text-xs cursor-not-allowed select-none transition-all"
                         />
                       </td>
 
@@ -2991,7 +3169,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                       className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-emerald-950/20 transition-all disabled:opacity-50 cursor-pointer text-center"
                       title="Confirm order & update customer catalog with discounted prices"
                     >
-                      {isConfirmingOrder ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" /> : <ShoppingBag className="w-3.5 h-3.5 shrink-0" />}
+                      {isConfirmingOrder ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-white shrink-0" /> : <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
                       <span className="truncate">{isConfirmingOrder ? 'Confirming...' : 'Confirm Order'}</span>
                     </button>
                   </div>
@@ -3004,6 +3182,50 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
       {/* TAB 2: LETTERHEAD PREVIEW (Interactive Responsive View & PDF Target) */}
       <div className={`${activeTab === 'preview' ? 'block' : 'hidden'} space-y-4`}>
+        {/* Preview Top Return Toolbar & Controls */}
+        <div className="w-full flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 sm:px-5 sm:py-3 rounded-2xl border border-slate-200/90 shadow-xs">
+          <button
+            type="button"
+            onClick={() => {
+              if (previewReturnTab === 'saved') {
+                setActiveTab('saved');
+              } else {
+                setActiveTab('builder');
+              }
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer self-start sm:self-auto shadow-2xs"
+          >
+            <ArrowLeft className="w-4 h-4 text-slate-600" />
+            <span>
+              {previewReturnTab === 'saved' ? 'Back to Saved Quotations' : (isEditingSaved ? 'Back to Edit' : 'Back to Builder')}
+            </span>
+          </button>
+
+          <div className="flex items-center gap-2.5 self-end sm:self-auto">
+            {/* Zoom Mode: Fit Width vs 100% */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setPreviewZoomMode('fit')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  previewZoomMode === 'fit' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Fit Width
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewZoomMode('100')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  previewZoomMode === '100' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                100%
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Paper Container (Styled for standard A4 document layout with dynamic responsive scaling) */}
         <div 
           ref={previewContainerRef}
@@ -3053,56 +3275,64 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
 
       {/* TAB 3: SAVED QUOTATIONS VIEW */}
       {activeTab === 'saved' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Top summary header with statistics */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-indigo-600" />
-                  Saved Quotations Catalog
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-2xs sm:shadow-xs space-y-3 sm:space-y-5">
+            <div className="flex items-start sm:items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2">
+                  <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                  <span>Saved Quotations Catalog</span>
                 </h2>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1 leading-snug">
                   View and manage all saved quotations. Load any quotation to modify and re-save, or confirm the order to update customer pricing with automatic price history.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
-                <button
-                  onClick={loadSavedQuotations}
-                  disabled={isLoadingSavedQuotations}
-                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 sm:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                  title="Reload quotations list"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSavedQuotations ? 'animate-spin text-indigo-600' : ''}`} />
-                  {isLoadingSavedQuotations ? 'Syncing...' : 'Refresh List'}
-                </button>
-              </div>
+              <button
+                onClick={() => loadSavedQuotations(true)}
+                disabled={isLoadingSavedQuotations}
+                className="shrink-0 flex items-center justify-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg sm:rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                title="Reload quotations list from Google Sheets"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSavedQuotations ? 'animate-spin text-indigo-600' : ''}`} />
+                <span className="hidden sm:inline">Refresh List</span>
+                <span className="sm:hidden">Refresh</span>
+              </button>
             </div>
 
-            {/* Quick Metrics (Confirmed Orders & Pending Confirmation Only) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200/60 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    Confirmed Orders
+            {/* Quick Metrics (Confirmed Orders & Pending Confirmation in one compact row on mobile) */}
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 pt-2 border-t border-slate-100">
+              {/* Confirmed Orders Card */}
+              <div className="p-2.5 sm:p-4 bg-emerald-50/70 rounded-xl border border-emerald-200/60 flex items-center justify-between min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] sm:text-xs font-semibold text-emerald-800 flex items-center gap-1 sm:gap-1.5 truncate">
+                    <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
+                    <span className="truncate">Confirmed</span>
+                    <span className="hidden sm:inline">Orders</span>
                   </div>
-                  <div className="text-2xl font-bold text-emerald-900 mt-1">{savedStats.confirmed}</div>
+                  <div className="text-lg sm:text-2xl font-bold font-mono text-emerald-950 mt-0.5 sm:mt-1">
+                    {savedStats.confirmed}
+                  </div>
                 </div>
-                <div className="text-[11px] text-emerald-700/80 font-medium bg-emerald-100/60 px-2.5 py-1 rounded-lg">
+                <div className="hidden sm:block text-[11px] text-emerald-700/80 font-medium bg-emerald-100/60 px-2.5 py-1 rounded-lg shrink-0">
                   Prices locked & updated
                 </div>
               </div>
-              <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200/60 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-amber-600" />
-                    Pending Confirmation
+
+              {/* Pending Confirmation Card */}
+              <div className="p-2.5 sm:p-4 bg-amber-50/70 rounded-xl border border-amber-200/60 flex items-center justify-between min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] sm:text-xs font-semibold text-amber-800 flex items-center gap-1 sm:gap-1.5 truncate">
+                    <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 shrink-0" />
+                    <span className="truncate">Pending</span>
+                    <span className="hidden sm:inline">Confirmation</span>
                   </div>
-                  <div className="text-2xl font-bold text-amber-900 mt-1">{savedStats.pending}</div>
+                  <div className="text-lg sm:text-2xl font-bold font-mono text-amber-950 mt-0.5 sm:mt-1">
+                    {savedStats.pending}
+                  </div>
                 </div>
-                <div className="text-[11px] text-amber-700/80 font-medium bg-amber-100/60 px-2.5 py-1 rounded-lg">
+                <div className="hidden sm:block text-[11px] text-amber-700/80 font-medium bg-amber-100/60 px-2.5 py-1 rounded-lg shrink-0">
                   Awaiting confirmation
                 </div>
               </div>
@@ -3154,7 +3384,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
           </div>
 
           {/* Quotations List */}
-          {isLoadingSavedQuotations ? (
+          {isLoadingSavedQuotations && savedQuotations.length === 0 ? (
             <div className="bg-white border border-slate-200/80 rounded-2xl p-12 text-center shadow-xs">
               <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-3" />
               <div className="text-sm font-bold text-slate-800">Loading saved quotations...</div>
@@ -3184,152 +3414,201 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
               )}
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {filteredSavedQuotations.map((q) => {
                 const isConfirmed = String(q.order_status || '').toUpperCase() === 'CONFIRMED';
-                const itemsCount = Array.isArray(q.items) ? q.items.length : 0;
 
                 return (
                   <div
                     key={q.quotation_no}
-                    className="bg-white border border-slate-200/80 rounded-2xl p-5 shadow-xs hover:border-indigo-200 transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-5"
+                    onClick={() => {
+                      handleLoadQuotation(q);
+                      setPreviewReturnTab('saved');
+                      setIsEditingSaved(false);
+                      setActiveTab('preview');
+                    }}
+                    className="bg-white border border-slate-200/80 hover:border-indigo-400 rounded-xl p-3 sm:px-5 sm:py-3.5 shadow-2xs hover:shadow-md hover:bg-slate-50/70 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-6 cursor-pointer group"
+                    title="Click row to preview quotation on letterhead"
                   >
-                    <div className="space-y-3 flex-1 min-w-0">
-                      {/* Top status & Quotation No line */}
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span className="font-mono text-sm font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200/80">
+                    {/* Information Content: 2-line layout on mobile, 1-line on desktop */}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-5 min-w-0 flex-1">
+                      
+                      {/* Mobile Row 1 / Desktop Column 1: Quotation ID badge + Mobile Action Icons */}
+                      <div className="flex items-center justify-between gap-2 w-full sm:w-auto shrink-0">
+                        <span className="font-mono text-xs sm:text-sm font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-indigo-200/80 truncate max-w-[210px] sm:max-w-none">
                           {q.quotation_no}
                         </span>
 
-                        {isConfirmed ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-2.5 py-0.5 rounded-full">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                            ORDER CONFIRMED
-                            {q.confirmed_at && (
-                              <span className="font-normal text-[10px] text-emerald-700">({formatDateOnly(q.confirmed_at)})</span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2.5 py-0.5 rounded-full">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            PENDING ORDER CONFIRMATION
-                          </span>
-                        )}
-
-                        <span className="text-[11px] text-slate-400">
-                          Date: <span className="font-medium text-slate-700">{formatDateOnly(q.quotation_date) || 'N/A'}</span>
-                        </span>
-                        {q.valid_until && (
-                          <span className="text-[11px] text-slate-400">
-                            Valid Till: <span className="font-medium text-slate-700">{formatDateOnly(q.valid_until)}</span>
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Customer Name & Info (Customer ID removed as requested) */}
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                          {q.customer_name || 'Customer'}
+                        {/* Action Icons on MOBILE (Edit, Preview, Confirm with clean consistent styling) */}
+                        <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+                          {isConfirmed ? (
+                            <>
+                              <span
+                                className="w-8 h-8 flex items-center justify-center bg-emerald-100/90 text-emerald-800 rounded-xl border border-emerald-300 shadow-2xs"
+                                title="Order Confirmed (Prices Locked)"
+                              >
+                                <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadQuotation(q);
+                                  setPreviewReturnTab('saved');
+                                  setIsEditingSaved(false);
+                                  setActiveTab('preview');
+                                }}
+                                className="w-8 h-8 flex items-center justify-center bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl border border-sky-200/90 transition-all cursor-pointer shadow-2xs"
+                                title="Preview quotation on company letterhead"
+                                aria-label="Preview Quotation"
+                              >
+                                <Eye className="w-4 h-4 text-sky-600 shrink-0" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {/* Edit Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadQuotation(q);
+                                  setIsEditingSaved(true);
+                                  setActiveTab('builder');
+                                }}
+                                className="w-8 h-8 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl border border-indigo-200/90 transition-all cursor-pointer shadow-2xs"
+                                title="Edit Quotation"
+                                aria-label="Edit Quotation"
+                              >
+                                <Edit3 className="w-4 h-4 text-indigo-600 shrink-0" />
+                              </button>
+                              {/* Preview Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadQuotation(q);
+                                  setPreviewReturnTab('saved');
+                                  setIsEditingSaved(false);
+                                  setActiveTab('preview');
+                                }}
+                                className="w-8 h-8 flex items-center justify-center bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl border border-sky-200/90 transition-all cursor-pointer shadow-2xs"
+                                title="Preview Quotation"
+                                aria-label="Preview Quotation"
+                              >
+                                <Eye className="w-4 h-4 text-sky-600 shrink-0" />
+                              </button>
+                              {/* Confirm Order Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleInitiateConfirmOrder(q);
+                                }}
+                                disabled={isConfirmingOrder}
+                                className="w-8 h-8 flex items-center justify-center rounded-xl transition-all cursor-pointer shadow-2xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 disabled:opacity-50"
+                                title="Confirm Order (Lock Prices)"
+                                aria-label="Confirm Order"
+                              >
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              </button>
+                            </>
+                          )}
                         </div>
-                        {q.customer_gstin && (
-                          <div className="text-[11px] text-slate-500">
-                            GSTIN: <span className="font-mono">{q.customer_gstin}</span>
-                          </div>
-                        )}
                       </div>
 
-                      {/* Items Preview Chips */}
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                        <span className="text-[11px] font-semibold text-slate-500 mr-1">
-                          {itemsCount} item{itemsCount === 1 ? '' : 's'}:
-                        </span>
-                        {(q.items || []).slice(0, 4).map((it, idx) => (
-                          <span
-                            key={idx}
-                            className="text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200/80 max-w-[200px] truncate"
-                            title={`${it.product_name} - ₹${it.rate} x ${it.qty} ${it.uom}`}
-                          >
-                            {it.product_name || `Item ${idx + 1}`} ({it.qty} {it.uom})
+                      {/* Mobile Row 2 / Desktop Column 2 & 3: Customer Name & Date */}
+                      <div className="flex items-center justify-between sm:justify-start gap-2 sm:gap-5 min-w-0 flex-1">
+                        {/* Customer Name */}
+                        <div className="min-w-0 flex-1">
+                          <span className="font-bold text-slate-900 text-xs sm:text-sm truncate block" title={q.customer_name}>
+                            {q.customer_name || 'Customer'}
                           </span>
-                        ))}
-                        {itemsCount > 4 && (
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            +{itemsCount - 4} more
-                          </span>
-                        )}
+                        </div>
+
+                        {/* Date */}
+                        <div className="shrink-0 text-slate-500 text-[11px] sm:text-xs font-medium flex items-center gap-1 sm:gap-1.5 whitespace-nowrap">
+                          <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 shrink-0" />
+                          <span>{formatDateOnly(q.quotation_date) || 'N/A'}</span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Right side: Amount & Action Buttons */}
-                    <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 shrink-0 pt-3 lg:pt-0 border-t lg:border-t-0 border-slate-100 w-full lg:w-auto">
-                      <div className="text-left lg:text-right w-full sm:w-auto">
-                        <div className="text-[11px] text-slate-400 font-medium">Grand Total (Incl. GST)</div>
-                        <div className="text-xl font-bold font-mono text-indigo-700">
-                          ₹{Number(q.grand_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                      </div>
-
-                      {/* Action Buttons: Stacked one after the other on mobile, row on desktop */}
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                        {isConfirmed ? (
-                          <>
-                            <span className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-xl border border-emerald-200 whitespace-nowrap">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                              <span>Order Confirmed (Locked)</span>
-                            </span>
-
-                            {/* View Letterhead Preview Button */}
-                            <button
-                              onClick={() => {
-                                handleLoadQuotation(q);
-                                setActiveTab('preview');
-                              }}
-                              className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
-                              title="View quotation letterhead & export"
-                            >
-                              <Eye className="w-4 h-4 text-indigo-600 shrink-0" />
-                              <span>View Quotation</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            {/* Load & Edit Button */}
-                            <button
-                              onClick={() => handleLoadQuotation(q)}
-                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200/80 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
-                              title="Load this quotation into the builder to edit, change items, or re-calculate"
-                            >
-                              <Edit3 className="w-4 h-4 text-indigo-600 shrink-0" />
-                              <span>Load & Edit</span>
-                            </button>
-
-                            {/* Confirm Order Button */}
-                            <button
-                              onClick={() => handleInitiateConfirmOrder(q)}
-                              disabled={isConfirmingOrder}
-                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20 disabled:opacity-50 whitespace-nowrap"
-                              title="Confirm order: permanently updates customer catalog pricing and adds old prices to Price History"
-                            >
-                              <ShoppingBag className="w-4 h-4 shrink-0" />
-                              <span>Confirm Order</span>
-                            </button>
-
-                            {/* Letterhead Preview Button */}
-                            <button
-                              onClick={() => {
-                                handleLoadQuotation(q);
-                                setActiveTab('preview');
-                              }}
-                              className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer whitespace-nowrap"
-                              title="View on company letterhead"
-                            >
-                              <Eye className="w-4 h-4 text-slate-500 shrink-0" />
-                              <span>Preview</span>
-                            </button>
-                          </>
-                        )}
-                      </div>
+                    {/* Action Buttons: Clean Cohesive Buttons on DESKTOP */}
+                    <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+                      {isConfirmed ? (
+                        <>
+                          <span
+                            className="w-8.5 h-8.5 flex items-center justify-center bg-emerald-100/90 text-emerald-800 rounded-xl border border-emerald-300 shadow-2xs"
+                            title="Order Confirmed (Prices Locked)"
+                          >
+                            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLoadQuotation(q);
+                              setPreviewReturnTab('saved');
+                              setIsEditingSaved(false);
+                              setActiveTab('preview');
+                            }}
+                            className="w-8.5 h-8.5 flex items-center justify-center bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl border border-sky-200/90 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                            title="Preview quotation on company letterhead"
+                            aria-label="Preview Quotation"
+                          >
+                            <Eye className="w-4 h-4 text-sky-600 shrink-0" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {/* Edit Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLoadQuotation(q);
+                              setIsEditingSaved(true);
+                              setActiveTab('builder');
+                            }}
+                            className="w-8.5 h-8.5 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl border border-indigo-200/90 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                            title="Edit Quotation"
+                            aria-label="Edit Quotation"
+                          >
+                            <Edit3 className="w-4 h-4 text-indigo-600 shrink-0" />
+                          </button>
+                          {/* Preview Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLoadQuotation(q);
+                              setPreviewReturnTab('saved');
+                              setIsEditingSaved(false);
+                              setActiveTab('preview');
+                            }}
+                            className="w-8.5 h-8.5 flex items-center justify-center bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl border border-sky-200/90 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                            title="Preview quotation on company letterhead"
+                            aria-label="Preview Quotation"
+                          >
+                            <Eye className="w-4 h-4 text-sky-600 shrink-0" />
+                          </button>
+                          {/* Confirm Order Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleInitiateConfirmOrder(q);
+                            }}
+                            disabled={isConfirmingOrder}
+                            className="w-8.5 h-8.5 flex items-center justify-center rounded-xl transition-all cursor-pointer shadow-2xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 disabled:opacity-50 hover:scale-105 active:scale-95"
+                            title="Confirm Order: permanently update customer catalog pricing"
+                            aria-label="Confirm Order"
+                          >
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -3347,7 +3626,7 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                  <ShoppingBag className="w-5 h-5" />
+                  <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 tracking-tight">
@@ -3624,6 +3903,101 @@ export function Quotation({ initialCustomerId = '', onNavigateToCatalog = null }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QUOTATION SAVED SUCCESS POPUP MODAL */}
+      {saveSuccessModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Top Icon & Close Button */}
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-center text-emerald-600 shadow-xs">
+                <CheckCircle2 className="w-7 h-7" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setSaveSuccessModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Title & Description */}
+            <div className="space-y-1">
+              <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                {saveSuccessModal.is_update ? 'Quotation Updated Successfully!' : 'Quotation Saved Successfully!'}
+              </h3>
+              <p className="text-xs text-slate-500">
+                Your quotation has been securely saved to Google Sheets and is ready to share or confirm.
+              </p>
+            </div>
+
+            {/* Quotation Details Card */}
+            <div className="bg-slate-50/80 rounded-2xl border border-slate-200/80 p-4 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Quotation No:</span>
+                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-200/80">
+                  {saveSuccessModal.quotation_no}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Customer:</span>
+                <span className="font-bold text-slate-800 truncate max-w-[200px]" title={saveSuccessModal.customer_name}>
+                  {saveSuccessModal.customer_name}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 font-medium">Items Count:</span>
+                <span className="font-semibold text-slate-700">{saveSuccessModal.items_count} item{saveSuccessModal.items_count === 1 ? '' : 's'}</span>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80">
+                <span className="text-slate-700 font-bold">Grand Total (Incl. GST):</span>
+                <span className="font-mono font-extrabold text-emerald-700 text-sm">
+                  ₹{Number(saveSuccessModal.grand_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSaveSuccessModal(null);
+                  setPreviewReturnTab(isEditingSaved ? 'builder' : 'saved');
+                  setActiveTab('preview');
+                }}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>View Letterhead</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSaveSuccessModal(null);
+                  setIsEditingSaved(false);
+                  setActiveTab('saved');
+                }}
+                className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition-all cursor-pointer"
+              >
+                <Layers className="w-4 h-4 text-slate-500" />
+                <span>Saved List</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSaveSuccessModal(null)}
+                className="px-4 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all cursor-pointer text-center"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

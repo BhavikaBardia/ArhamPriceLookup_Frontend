@@ -205,6 +205,16 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
     loadAllData();
   }, []);
 
+  // Automatically reload when anything is saved to Google Sheets from anywhere in the app
+  useEffect(() => {
+    const handleGSheetSaved = () => {
+      console.log('[Manage] Google Sheets updated. Auto-reloading data...');
+      loadAllData(true);
+    };
+    window.addEventListener('arham_gsheet_saved', handleGSheetSaved);
+    return () => window.removeEventListener('arham_gsheet_saved', handleGSheetSaved);
+  }, []);
+
   useEffect(() => {
     if (prefillCustomer) setPriceCustomerId(prefillCustomer);
     if (prefillProduct) setPriceProductId(prefillProduct);
@@ -232,12 +242,12 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
     }
   };
 
-  const loadAllData = async () => {
+  const loadAllData = async (force = false) => {
     setIsLoadingData(true);
     try {
       const [cData, pData] = await Promise.all([
-        api.getCustomers(),
-        api.getProducts(),
+        api.getCustomers({ force }),
+        api.getProducts({ force }),
       ]);
       const safeC = Array.isArray(cData) ? cData.map(c => {
         let gstin = String(c.gstin || c.GSTIN || c['GSTIN'] || c.Gstin || c.GstIn || '').trim();
@@ -677,25 +687,25 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
   }, [customers]);
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-4 sm:space-y-6 pb-12">
       {/* Header Banner */}
-      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+      <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-xs sm:shadow-sm space-y-3 sm:space-y-4">
+        <div className="flex items-start sm:items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-1.5 sm:gap-2">
               {mode === 'product' ? (
                 <>
-                  <PackagePlus className="w-6 h-6 text-indigo-600" />
-                  Manage Products
+                  <PackagePlus className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 shrink-0" />
+                  <span>Manage Products</span>
                 </>
               ) : (
                 <>
-                  <Users className="w-6 h-6 text-indigo-600" />
-                  Manage Customers & Pricing
+                  <Users className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600 shrink-0" />
+                  <span>Manage Customers & Pricing</span>
                 </>
               )}
             </h1>
-            <p className="text-sm text-slate-500 mt-1">
+            <p className="text-[11px] sm:text-sm text-slate-500 mt-0.5 sm:mt-1 leading-snug">
               {mode === 'product'
                 ? 'Full CRUD management for Products (Product ID, Standard Product Name, Make / Brand).'
                 : 'Set customer specific pricing & manage customer records.'}
@@ -703,18 +713,19 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           </div>
 
           <button
-            onClick={loadAllData}
-            className="self-start md:self-auto flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:text-slate-900 hover:bg-slate-200/80 border border-slate-200 transition-all cursor-pointer"
+            onClick={() => loadAllData(true)}
+            className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg sm:rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:text-slate-900 hover:bg-slate-200/80 border border-slate-200 transition-all cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoadingData ? 'animate-spin text-indigo-600' : ''}`} />
-            Refresh Data
+            <span className="hidden sm:inline">Refresh Data</span>
+            <span className="sm:hidden">Refresh</span>
           </button>
         </div>
 
         {isLoadingData && (
-          <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs flex items-center gap-3 animate-pulse font-medium">
-            <RefreshCw className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
-            <div>
+          <div className="p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs flex items-center gap-2.5 sm:gap-3 animate-pulse font-medium">
+            <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin text-indigo-600 shrink-0" />
+            <div className="text-[11px] sm:text-xs">
               <span className="font-bold text-indigo-950">Syncing catalog data...</span> Please wait while customer and product catalog records load.
             </div>
           </div>
@@ -724,26 +735,26 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
       {/* Main Container */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         {mode === 'customer' && (
-          <TabsList className="w-full justify-start max-w-md">
-            <TabsTrigger value="pricing" className="flex items-center gap-2 flex-1">
-              <DollarSign className="w-4 h-4" />
-              Set Customer Price
+          <TabsList className="w-full justify-start max-w-md h-auto p-1 bg-slate-100 rounded-xl">
+            <TabsTrigger value="pricing" className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 sm:py-2 sm:px-3 text-xs sm:text-sm font-semibold rounded-lg flex-1">
+              <DollarSign className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>Set Customer Price</span>
             </TabsTrigger>
-            <TabsTrigger value="customer" className="flex items-center gap-2 flex-1">
-              <UserPlus className="w-4 h-4" />
-              Manage Customers (CRUD)
+            <TabsTrigger value="customer" className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 sm:py-2 sm:px-3 text-xs sm:text-sm font-semibold rounded-lg flex-1">
+              <UserPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>Customers (CRUD)</span>
             </TabsTrigger>
           </TabsList>
         )}
 
         {/* Tab 1: Set / Update Customer Price */}
         <TabsContent value="pricing">
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-6">
-            <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
-              <Sparkles className="w-5 h-5 text-emerald-600" />
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-xs sm:shadow-sm space-y-4 sm:space-y-6">
+            <div className="flex items-center gap-2 pb-3 sm:pb-4 border-b border-slate-100">
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 shrink-0" />
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Add or Update Customer Price</h2>
-                <p className="text-xs text-slate-500">Updates existing prices automatically while keeping a log of previous costs.</p>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">Add or Update Customer Price</h2>
+                <p className="text-[11px] sm:text-xs text-slate-500">Updates existing prices automatically while keeping a log of previous costs.</p>
               </div>
             </div>
 
@@ -876,45 +887,60 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
 
         {/* Tab 2: Manage Products (CRUD) */}
         <TabsContent value="product" className="space-y-6">
-          {/* Quick Metrics Bar for Products */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                <Layers className="w-5 h-5" />
+          {/* Quick Metrics Bar for Products (Compact single row on mobile) */}
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0">
+                <Layers className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">Total Products</div>
-                <div className="text-lg font-bold text-slate-900">{products.length} Catalog Items</div>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                <Building2 className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">Products with Make / Brand</div>
-                <div className="text-lg font-bold text-emerald-800">{productsWithMakeCount} Branded Items</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">Total</span>
+                  <span className="hidden sm:inline">Total Products</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-slate-900 mt-0.5 leading-tight truncate">
+                  {products.length} <span className="text-[10px] sm:text-xs text-slate-500 font-normal hidden sm:inline">Catalog Items</span>
+                </div>
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-sm shrink-0">
-                <Tag className="w-5 h-5" />
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-emerald-200/80 sm:border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">
+                <Building2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">General Products (No Make)</div>
-                <div className="text-lg font-bold text-slate-800">{products.length - productsWithMakeCount} General Items</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-emerald-700 sm:text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">Branded</span>
+                  <span className="hidden sm:inline">Products with Make / Brand</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-emerald-800 mt-0.5 leading-tight truncate">
+                  {productsWithMakeCount} <span className="text-[10px] sm:text-xs text-emerald-600 font-normal hidden sm:inline">Branded Items</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center font-bold shrink-0">
+                <Tag className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">General</span>
+                  <span className="hidden sm:inline">General Products (No Make)</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-slate-800 mt-0.5 leading-tight truncate">
+                  {products.length - productsWithMakeCount} <span className="text-[10px] sm:text-xs text-slate-500 font-normal hidden sm:inline">General Items</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Add Product Form Card */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-6">
-            <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
-              <PackagePlus className="w-5 h-5 text-indigo-600" />
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-xs sm:shadow-sm space-y-4 sm:space-y-6">
+            <div className="flex items-center gap-2 pb-3 sm:pb-4 border-b border-slate-100">
+              <PackagePlus className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Add New Product to Catalog</h2>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">Add New Product to Catalog</h2>
               </div>
             </div>
 
@@ -1021,14 +1047,14 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           </div>
 
           {/* Full Products Catalog Table with CRUD Actions */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 shadow-xs sm:shadow-sm space-y-3 sm:space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2">
               <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Table className="w-5 h-5 text-indigo-600" />
-                  Catalog Products Table ({filteredCatalogProducts.length})
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2">
+                  <Table className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                  <span>Catalog Products Table ({filteredCatalogProducts.length})</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Edit or delete any product in catalog.</p>
+                <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">Edit or delete any product in catalog.</p>
               </div>
 
               {/* Search & Make Filter Pills */}
@@ -1257,45 +1283,60 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
 
         {/* Tab 3: Manage Customers (CRUD) */}
         <TabsContent value="customer" className="space-y-6">
-          {/* Quick Metrics Bar for Customers */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                <Users className="w-5 h-5" />
+          {/* Quick Metrics Bar for Customers (Compact single row on mobile) */}
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shrink-0">
+                <Users className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">Total Customers</div>
-                <div className="text-lg font-bold text-slate-900">{customers.length} Registered</div>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
-                <FileText className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">Customers with GSTIN</div>
-                <div className="text-lg font-bold text-emerald-800">{customersWithGstinCount} Tax Registered</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">Total</span>
+                  <span className="hidden sm:inline">Total Customers</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-slate-900 mt-0.5 leading-tight truncate">
+                  {customers.length} <span className="text-[10px] sm:text-xs text-slate-500 font-normal hidden sm:inline">Registered</span>
+                </div>
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-sm shrink-0">
-                <User className="w-5 h-5" />
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-emerald-200/80 sm:border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0">
+                <FileText className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
               </div>
-              <div>
-                <div className="text-xs text-slate-500 font-medium">Without GSTIN</div>
-                <div className="text-lg font-bold text-slate-800">{customers.length - customersWithGstinCount} General</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-emerald-700 sm:text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">With GSTIN</span>
+                  <span className="hidden sm:inline">Customers with GSTIN</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-emerald-800 mt-0.5 leading-tight truncate">
+                  {customersWithGstinCount} <span className="text-[10px] sm:text-xs text-emerald-600 font-normal hidden sm:inline">Tax Registered</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-2 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-slate-200/80 shadow-2xs sm:shadow-xs flex flex-col sm:flex-row items-start sm:items-center gap-1.5 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl bg-slate-200 text-slate-700 flex items-center justify-center font-bold shrink-0">
+                <User className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-xs text-slate-500 font-semibold truncate leading-tight">
+                  <span className="sm:hidden">No GSTIN</span>
+                  <span className="hidden sm:inline">Without GSTIN</span>
+                </div>
+                <div className="text-sm sm:text-lg font-bold font-mono text-slate-800 mt-0.5 leading-tight truncate">
+                  {customers.length - customersWithGstinCount} <span className="text-[10px] sm:text-xs text-slate-500 font-normal hidden sm:inline">General</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Add Customer Form Card */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-sm space-y-6">
-            <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
-              <UserPlus className="w-5 h-5 text-indigo-600" />
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3.5 sm:p-6 shadow-xs sm:shadow-sm space-y-4 sm:space-y-6">
+            <div className="flex items-center gap-2 pb-3 sm:pb-4 border-b border-slate-100">
+              <UserPlus className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Add New Customer</h2>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">Add New Customer</h2>
               </div>
             </div>
 
@@ -1368,14 +1409,14 @@ export function Manage({ prefillCustomer, prefillProduct, mode = 'product', init
           </div>
 
           {/* Full Customers Catalog Table with CRUD Actions */}
-          <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
+          <div className="bg-white border border-slate-200/80 rounded-xl sm:rounded-2xl p-3 sm:p-6 shadow-xs sm:shadow-sm space-y-3 sm:space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2">
               <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Table className="w-5 h-5 text-indigo-600" />
-                  Customer Directory Table ({filteredCatalogCustomers.length})
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-1.5 sm:gap-2">
+                  <Table className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 shrink-0" />
+                  <span>Customer Directory Table ({filteredCatalogCustomers.length})</span>
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">Edit or delete any customer in database.</p>
+                <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">Edit or delete any customer in database.</p>
               </div>
 
               {/* Search & GSTIN Filter Pills */}

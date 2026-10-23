@@ -273,7 +273,7 @@ export function SearchableProductSelect({
         <PopoverPrimitive.Content
           align="start"
           sideOffset={6}
-          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-[540px] sm:min-w-[620px] max-w-[760px] max-h-[500px] overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-xl p-3 text-slate-800 shadow-2xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="z-50 w-[var(--radix-popover-trigger-width)] min-w-[320px] sm:min-w-[620px] max-w-[calc(100vw-24px)] sm:max-w-[760px] max-h-[500px] overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-xl p-3 text-slate-800 shadow-2xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
           {/* Search Input Field */}
           <div className="relative mb-2">
@@ -283,7 +283,7 @@ export function SearchableProductSelect({
               type="text"
               value={filterQuery}
               onChange={(e) => setFilterQuery(e.target.value)}
-              placeholder="Search product name, size, make, or ID (e.g. 1 inch, polycab, bend)..."
+              placeholder="Search product name, size, or make (e.g. 1 inch, polycab, bend)..."
               className="w-full h-10 bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-8 py-1.5 text-xs text-slate-900 font-semibold placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:bg-white transition-all shadow-inner"
             />
             {filterQuery && (
@@ -358,40 +358,35 @@ export function SearchableProductSelect({
                       key={p.product_id}
                       type="button"
                       onClick={() => handleSelect(p.product_id)}
-                      className={`w-full text-left flex items-start justify-between p-3 rounded-xl text-xs transition-all cursor-pointer border ${
+                      className={`w-full text-left flex items-center justify-between py-2 px-3 rounded-xl text-xs transition-all cursor-pointer border ${
                         isSelected
                           ? 'bg-indigo-50/90 text-indigo-950 border-indigo-300 shadow-xs'
                           : 'hover:bg-slate-50 text-slate-800 border-slate-100 hover:border-slate-200'
                       }`}
                     >
-                      <div className="flex-1 min-w-0 pr-3">
-                        {/* Full standard name - wraps completely, never truncated */}
-                        <div className="font-bold text-slate-900 text-xs leading-relaxed whitespace-normal break-words">
+                      <div className="flex-1 min-w-0 pr-2.5 flex items-center gap-2 flex-wrap">
+                        {/* Full standard name */}
+                        <span className="font-bold text-slate-900 text-xs leading-snug">
                           {p.standard_name}
-                        </div>
+                        </span>
 
-                        {/* Detail badges */}
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                          {p.product_id && (
-                            <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                              {p.product_id}
-                            </span>
-                          )}
-                          {p.make && (
-                            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/80">
-                              Make: {p.make}
-                            </span>
-                          )}
-                          {p.price !== undefined && p.price !== null && !isNaN(p.price) && (
-                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono">
-                              Catalog Rate: ₹{Number(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                            </span>
-                          )}
-                        </div>
+                        {/* Make / Brand side by side */}
+                        {p.make && (
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/80 shrink-0">
+                            {p.make}
+                          </span>
+                        )}
+
+                        {/* Catalog Rate if available */}
+                        {p.price !== undefined && p.price !== null && !isNaN(p.price) && (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono shrink-0 ml-auto sm:ml-0">
+                            ₹{Number(p.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
                       </div>
 
                       {isSelected && (
-                        <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                        <div className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                           <Check className="w-3.5 h-3.5 stroke-[2.5]" />
                         </div>
                       )}

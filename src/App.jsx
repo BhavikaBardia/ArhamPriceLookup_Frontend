@@ -6,6 +6,7 @@ import { Manage } from './pages/Manage';
 import { Quotation } from './pages/Quotation';
 import { AdminSecurityModal } from './components/AdminSecurityModal';
 import { AdminLockScreen } from './components/AdminLockScreen';
+import { ScrollToTop } from './components/ScrollToTop';
 import { 
   Sparkles, Table, Menu, X, PackagePlus, Users, FileText,
   ShieldCheck, Lock, Settings, LogOut, User as UserIcon
@@ -199,37 +200,43 @@ function AppContent() {
         )}
       </header>
 
-      {/* Main Page Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
-        {currentPage === 'catalog' ? (
+      {/* Main Page Container - Kept mounted in DOM for instant 0ms tab switching */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-3.5 sm:pt-8">
+        <div className={currentPage === 'catalog' ? 'block' : 'hidden'}>
           <CustomerCatalog 
             onNavigateToQuotation={(cid) => { setPrefillCustomer(cid); setCurrentPage('quotation'); }} 
           />
-        ) : currentPage === 'quotation' ? (
+        </div>
+
+        <div className={currentPage === 'quotation' ? 'block' : 'hidden'}>
           <Quotation 
             initialCustomerId={prefillCustomer} 
             onNavigateToCatalog={(cid) => { setPrefillCustomer(cid); setCurrentPage('catalog'); }}
           />
-        ) : currentPage === 'products' ? (
-          isAdmin ? (
-            <Manage mode="product" />
-          ) : (
-            <AdminLockScreen 
-              title="Product Management" 
-              onNavigateToCatalog={() => setCurrentPage('catalog')} 
-            />
-          )
+        </div>
+
+        {isAdmin ? (
+          <>
+            <div className={currentPage === 'products' ? 'block' : 'hidden'}>
+              <Manage mode="product" />
+            </div>
+
+            <div className={currentPage === 'customers' ? 'block' : 'hidden'}>
+              <Manage mode="customer" prefillCustomer={prefillCustomer} prefillProduct={prefillProduct} />
+            </div>
+          </>
         ) : (
-          isAdmin ? (
-            <Manage mode="customer" prefillCustomer={prefillCustomer} prefillProduct={prefillProduct} />
-          ) : (
+          (currentPage === 'products' || currentPage === 'customers') && (
             <AdminLockScreen 
-              title="Customer Management" 
+              title={currentPage === 'products' ? "Product Management" : "Customer Management"} 
               onNavigateToCatalog={() => setCurrentPage('catalog')} 
             />
           )
         )}
       </main>
+
+      {/* Floating Scroll To Top Button */}
+      <ScrollToTop />
 
       {/* Security & Account Settings Modal */}
       <AdminSecurityModal />
